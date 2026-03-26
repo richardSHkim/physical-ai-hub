@@ -1,9 +1,5 @@
-# 환경변수 (envs/ 아래 실제 파일은 git 제외)
+# 환경변수 (시크릿이 포함된 .env.base만 제외)
 envs/.env.base
-envs/.env.piper
-envs/.env.openpi
-envs/.env.gr00t
-envs/.env.leisaac
 
 # 루트 .env (docker-compose 기본값용)
 .env
