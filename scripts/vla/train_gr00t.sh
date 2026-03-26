@@ -6,7 +6,7 @@ set -a
 source "$(dirname "$0")/../../envs/.env.gr00t"
 set +a
 
-GR00T_ROOT="$(cd "$(dirname "$0")/../../vla/gr00t/Isaac-GR00T" && pwd)"
+GR00T_ROOT="$(cd "$(dirname "$0")/../../vla/Isaac-GR00T" && pwd)"
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 DATASET_PATH="${GR00T_DATASET_PATH:-datasets/richardshkim/piper_banana_v2_v2.1}"

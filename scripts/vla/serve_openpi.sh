@@ -6,7 +6,7 @@ set -a
 source "$(dirname "$0")/../../envs/.env.openpi"
 set +a
 
-OPENPI_ROOT="$(cd "$(dirname "$0")/../../vla/openpi/openpi" && pwd)"
+OPENPI_ROOT="$(cd "$(dirname "$0")/../../vla/openpi" && pwd)"
 
 PIPER_CONFIG_NAME="${PIPER_CONFIG_NAME:-pi05_piper}"
 PIPER_POLICY_DIR="${PIPER_POLICY_DIR:?Set PIPER_POLICY_DIR to a checkpoint directory.}"

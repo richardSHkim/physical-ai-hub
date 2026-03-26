@@ -6,7 +6,7 @@ set -a
 source "$(dirname "$0")/../../envs/.env.openpi"
 set +a
 
-OPENPI_ROOT="$(cd "$(dirname "$0")/../../vla/openpi/openpi" && pwd)"
+OPENPI_ROOT="$(cd "$(dirname "$0")/../../vla/openpi" && pwd)"
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 PIPER_STAGED_DATASET="${PIPER_STAGED_DATASET:-datasets/richardshkim/piper_banana_v2_openpi}"
