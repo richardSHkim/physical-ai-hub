@@ -1,0 +1,30 @@
+# 환경변수 (envs/ 아래 실제 파일은 git 제외)
+envs/.env.base
+envs/.env.piper
+envs/.env.openpi
+envs/.env.gr00t
+envs/.env.leisaac
+
+# 루트 .env (docker-compose 기본값용)
+.env
+
+# 체크포인트
+checkpoints/
+
+# 데이터셋
+data/datasets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

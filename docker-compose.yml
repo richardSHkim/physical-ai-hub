@@ -1,0 +1,72 @@
+services:
+  piper:
+    build:
+      context: .
+      dockerfile: docker/piper/Dockerfile
+    network_mode: host
+    privileged: true
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - .:/workspace
+      - /dev:/dev
+    env_file:
+      - envs/.env.base
+      - envs/.env.piper
+
+  openpi:
+    build:
+      context: .
+      dockerfile: docker/openpi/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/workspace
+      - ./checkpoints:/checkpoints
+    env_file:
+      - envs/.env.base
+      - envs/.env.openpi
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  gr00t:
+    build:
+      context: .
+      dockerfile: docker/gr00t/Dockerfile
+    ports:
+      - "8001:8001"
+    volumes:
+      - .:/workspace
+      - ./checkpoints:/checkpoints
+    env_file:
+      - envs/.env.base
+      - envs/.env.gr00t
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  leisaac:
+    build:
+      context: .
+      dockerfile: docker/leisaac/Dockerfile
+    volumes:
+      - .:/workspace
+    env_file:
+      - envs/.env.base
+      - envs/.env.leisaac
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

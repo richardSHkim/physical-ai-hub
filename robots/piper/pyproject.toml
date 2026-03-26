@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot-piper"
+version = "0.1.0"
+description = "LeRobot-compatible package for Agilex PiPER robot"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["lerobot_piper*"]

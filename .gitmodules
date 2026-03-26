@@ -1,0 +1,12 @@
+[submodule "vla/openpi/openpi"]
+	path = vla/openpi/openpi
+	url = https://github.com/richardSHkim/openpi.git
+	branch = main
+[submodule "vla/gr00t/Isaac-GR00T"]
+	path = vla/gr00t/Isaac-GR00T
+	url = https://github.com/NVIDIA/Isaac-GR00T.git
+	branch = main
+[submodule "eval/leisaac"]
+	path = eval/leisaac
+	url = https://github.com/richardSHkim/leisaac.git
+	branch = main
