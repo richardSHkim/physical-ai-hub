@@ -1,0 +1,389 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Estimate alignment parameters (R, s) for PIKA Sense -> Robot base teleop.
+
+Goal:
+  dp_base ≈ s * R * dp_pika_world
+
+How it works:
+  - Ask user to move PIKA Sense along robot-base directions:
+      +X, -X, +Y, -Y, +Z, -Z  (robot base frame)
+  - Record start/end PIKA positions (world/base_link from get_pose())
+  - Build unit direction vectors u_i in PIKA world
+  - Pair them with desired robot unit vectors v_i
+  - Solve R (SO(3)) using SVD (Orthogonal Procrustes/Wahba)
+  - Solve s using median ratio of desired_robot_move / observed_hand_move
+  - Save to calib.json
+
+Dependencies:
+  pip install numpy
+"""
+
+import argparse
+import json
+import time
+from dataclasses import dataclass, field
+from typing import Tuple, List, Optional
+
+import numpy as np
+
+
+# -----------------------------
+# 0) YOU implement this adapter
+# -----------------------------
+class PikaAdapter:
+    """
+    Wrap your pika_sdk access here.
+
+    Must return:
+      pos: np.ndarray shape (3,), in meters, world(base_link) frame
+      quat: np.ndarray shape (4,), quaternion (unused in this calibration, but kept for consistency)
+    """
+    def __init__(
+        self,
+        device_key: str = "WM0",
+        port: str = "/dev/ttyUSB0",
+        pos_unit: str = "m",
+        startup_timeout_s: float = 5.0,
+        poll_hz: float = 60.0,
+    ):
+        self.device_key = device_key
+        self.port = port
+        self.pos_scale = 1.0 if pos_unit == "m" else 0.001
+        self.poll_dt = 1.0 / max(1.0, float(poll_hz))
+        self._sense = None
+        self.dev = None
+        self._connect()
+        self._wait_for_first_pose(timeout_s=startup_timeout_s)
+
+    def _connect(self) -> None:
+        try:
+            from pika import sense
+        except ImportError as exc:
+            raise RuntimeError(
+                "Failed to import pika SDK (`from pika import sense`). "
+                "Install/activate pika_sdk first."
+            ) from exc
+
+        self._sense = sense
+        self.dev = self._sense(self.port)
+        ok = self.dev.connect()
+        if not ok:
+            raise RuntimeError(f"Failed to connect PIKA Sense on port: {self.port}")
+
+    def close(self) -> None:
+        if self.dev is None:
+            return
+        try:
+            self.dev.disconnect()
+        except Exception:
+            pass
+        self.dev = None
+
+    def _get_raw_pose(self):
+        if self.dev is None:
+            return None
+        pose_obj = self.dev.get_pose(self.device_key)
+        if pose_obj is None:
+            all_poses = self.dev.get_pose()
+            if isinstance(all_poses, dict):
+                pose_obj = all_poses.get(self.device_key)
+        return pose_obj
+
+    def _wait_for_first_pose(self, timeout_s: float) -> None:
+        deadline = time.time() + max(0.1, timeout_s)
+        while time.time() < deadline:
+            if self._get_raw_pose() is not None:
+                return
+            time.sleep(self.poll_dt)
+        raise RuntimeError(
+            f"Timed out waiting for first pose (device_key={self.device_key}, timeout={timeout_s:.1f}s)"
+        )
+
+    def get_pose(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Return (pos_m, quat_xyzw)
+        - pos unit must be meters (convert if needed)
+        - quat order ideally [x,y,z,w] (not needed for R,s here)
+        """
+        if self.dev is None:
+            raise RuntimeError("PIKA device is not connected.")
+
+        pose_obj = self._get_raw_pose()
+        if pose_obj is None:
+            # Short retry window to absorb occasional tracker latency/drop.
+            deadline = time.time() + 1.0
+            while time.time() < deadline and pose_obj is None:
+                time.sleep(self.poll_dt)
+                pose_obj = self._get_raw_pose()
+
+        if pose_obj is None:
+            raise RuntimeError(f"No pose available for device_key={self.device_key}")
+
+        pos = np.asarray(pose_obj.position, dtype=np.float64) * self.pos_scale
+        quat = np.asarray(pose_obj.rotation, dtype=np.float64)
+        if pos.shape != (3,):
+            raise RuntimeError(f"Unexpected position shape: {pos.shape}")
+        if quat.shape != (4,):
+            raise RuntimeError(f"Unexpected quaternion shape: {quat.shape}")
+        return pos, quat
+
+    def get_gripper_distance_mm(self) -> Optional[float]:
+        """
+        Return current PIKA gripper opening distance in mm when available.
+        Returns None if the SDK/firmware cannot provide a valid value.
+        """
+        if self.dev is None:
+            raise RuntimeError("PIKA device is not connected.")
+        try:
+            dist = self.dev.get_gripper_distance()
+        except Exception:
+            return None
+        if dist is None:
+            return None
+        return float(dist)
+
+
+# -----------------------------
+# 1) math utilities
+# -----------------------------
+def normalize(v: np.ndarray, eps: float = 1e-9) -> np.ndarray:
+    n = float(np.linalg.norm(v))
+    if n < eps:
+        return np.zeros_like(v)
+    return v / n
+
+
+def solve_rotation_procrustes(U_dirs: np.ndarray, V_dirs: np.ndarray) -> np.ndarray:
+    """
+    Solve R in SO(3) minimizing || V - R U ||_F
+    U_dirs: (3,N) unit vectors in PIKA(world) frame
+    V_dirs: (3,N) unit vectors in ROBOT(base) frame
+    """
+    H = V_dirs @ U_dirs.T
+    Q, _, Pt = np.linalg.svd(H)
+    Rm = Q @ Pt
+    if np.linalg.det(Rm) < 0:
+        Q[:, -1] *= -1
+        Rm = Q @ Pt
+    return Rm
+
+
+def average_pose(tracker: PikaAdapter, secs: float = 0.25, hz: float = 120.0) -> Tuple[np.ndarray, np.ndarray]:
+    """Noise-reduced pose by averaging positions and quaternion (rough)."""
+    dt = 1.0 / hz
+    n = max(2, int(secs * hz))
+    ps = []
+    qs = []
+    for _ in range(n):
+        p, q = tracker.get_pose()
+        ps.append(p)
+        qs.append(q)
+        time.sleep(dt)
+    p_mean = np.mean(np.stack(ps, axis=0), axis=0)
+
+    # quaternion average (not used for R,s; keep simple & robust)
+    qs = np.stack(qs, axis=0)
+    q0 = qs[0]
+    for i in range(len(qs)):
+        if np.dot(q0, qs[i]) < 0:
+            qs[i] *= -1
+    q_mean = qs.mean(axis=0)
+    q_mean = q_mean / max(1e-12, np.linalg.norm(q_mean))
+    return p_mean, q_mean
+
+
+@dataclass
+class CalibConfig:
+    # Robot base convention used by this script:
+    #   +X: forward, +Y: left, +Z: up
+    # If your robot uses a different convention, override these vectors via CLI.
+    x_vec: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0, 0.0], dtype=np.float64))
+    y_vec: np.ndarray = field(default_factory=lambda: np.array([0.0, 1.0, 0.0], dtype=np.float64))
+    z_vec: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0, 1.0], dtype=np.float64))
+
+    # Collection params
+    avg_secs: float = 0.25
+    min_move_m: float = 0.02      # ignore steps smaller than 2cm
+    desired_robot_move_m: float = 0.05  # used to compute initial s (median)
+
+
+def build_steps(cfg: CalibConfig):
+    # 6 direction steps in robot base frame
+    return [
+        ("+X (Forward)",  cfg.x_vec),
+        ("-X (Backward)", -cfg.x_vec),
+        ("+Y (Left)", cfg.y_vec),
+        ("-Y (Right)", -cfg.y_vec),
+        ("+Z (Up)",     cfg.z_vec),
+        ("-Z (Down)",  -cfg.z_vec),
+    ]
+
+
+def validate_and_orthonormalize_axes(cfg: CalibConfig) -> CalibConfig:
+    x_axis = normalize(np.array(cfg.x_vec, dtype=np.float64))
+    y_axis_raw = normalize(np.array(cfg.y_vec, dtype=np.float64))
+    z_hint = normalize(np.array(cfg.z_vec, dtype=np.float64))
+
+    if np.linalg.norm(x_axis) < 1e-9 or np.linalg.norm(y_axis_raw) < 1e-9 or np.linalg.norm(z_hint) < 1e-9:
+        raise ValueError("Axis vectors must be non-zero.")
+
+    # Gram-Schmidt on y against x, then build right-handed z from x x y.
+    y_axis = y_axis_raw - np.dot(y_axis_raw, x_axis) * x_axis
+    y_axis = normalize(y_axis)
+    if np.linalg.norm(y_axis) < 1e-9:
+        raise ValueError("`x_axis` and `y_axis` are colinear; cannot build a valid basis.")
+
+    z_axis = normalize(np.cross(x_axis, y_axis))
+    if np.linalg.norm(z_axis) < 1e-9:
+        raise ValueError("Failed to derive `z_axis` from `x_axis x y_axis`.")
+
+    # Keep z direction close to user input when possible.
+    if np.dot(z_axis, z_hint) < 0:
+        z_axis *= -1.0
+        y_axis *= -1.0
+
+    return CalibConfig(
+        x_vec=x_axis,
+        y_vec=y_axis,
+        z_vec=z_axis,
+        avg_secs=cfg.avg_secs,
+        min_move_m=cfg.min_move_m,
+        desired_robot_move_m=cfg.desired_robot_move_m,
+    )
+
+
+def calibrate_R_s(tracker: PikaAdapter, out_path: str, cfg: CalibConfig):
+    print("\n=== Alignment Calibration (Robot-base reference) ===")
+    print("You will do 6 short moves aligned to ROBOT BASE axes.")
+    print("For each step:")
+    print("  1) Hold still → press Enter to capture START")
+    print("  2) Move straight ~5-15cm in the instructed direction")
+    print("  3) Hold still → press Enter to capture END")
+    print("\nIMPORTANT: move in ROBOT BASE directions, NOT in your hand-local directions.\n")
+
+    steps = build_steps(cfg)
+
+    U_list: List[np.ndarray] = []  # PIKA(world) unit direction vectors
+    V_list: List[np.ndarray] = []  # ROBOT(base) unit direction vectors
+    d_hand: List[float] = []
+
+    for name, v_des in steps:
+        while True:
+            input(f"[{name}] Press Enter to capture START (hold still)")
+            p0, _ = average_pose(tracker, secs=cfg.avg_secs)
+
+            input(f"[{name}] Move now, then press Enter to capture END (hold still)")
+            p1, _ = average_pose(tracker, secs=cfg.avg_secs)
+
+            dp = p1 - p0
+            dist = float(np.linalg.norm(dp))
+            if dist < cfg.min_move_m:
+                print(f"  !! Move too small: {dist:.4f} m. Please redo this step.")
+                continue
+
+            u = normalize(dp)
+            U_list.append(u)
+            V_list.append(normalize(v_des))
+            d_hand.append(dist)
+            print(f"  recorded dist={dist:.4f} m, u(pika_world)={u}")
+            break
+
+    if len(U_list) < 3:
+        raise RuntimeError("Not enough valid steps. Need >=3 (recommend 6). Re-run and make larger moves.")
+
+    U = np.stack(U_list, axis=1)  # 3xN
+    V = np.stack(V_list, axis=1)  # 3xN
+
+    R_map = solve_rotation_procrustes(U, V)
+
+    # s initial estimate: median(desired_robot_move / hand_move)
+    ratios = [cfg.desired_robot_move_m / d for d in d_hand if d > 1e-9]
+    s = float(np.median(np.array(ratios, dtype=np.float64))) if ratios else 1.0
+
+    # Save
+    calib = {
+        "version": 1,
+        "timestamp_unix": time.time(),
+        "device_key": tracker.device_key,
+        "R_map_rowmajor_3x3": R_map.reshape(-1).tolist(),
+        "s": s,
+        "robot_base_convention": {
+            "x_plus_forward": cfg.x_vec.tolist(),
+            "y_plus_left": cfg.y_vec.tolist(),
+            "z_plus_up": cfg.z_vec.tolist(),
+        },
+        "collection": {
+            "avg_secs": cfg.avg_secs,
+            "min_move_m": cfg.min_move_m,
+            "desired_robot_move_m": cfg.desired_robot_move_m,
+            "valid_steps": len(U_list),
+        },
+        "definition": "dp_base = s * R_map * dp_pika_world (incremental teleop recommended)"
+    }
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(calib, f, indent=2, ensure_ascii=False)
+
+    print("\n=== Result ===")
+    print("R_map (robot_base <- pika_world):\n", R_map)
+    print("det(R_map) =", float(np.linalg.det(R_map)))
+    print("s =", s)
+    print("Saved:", out_path)
+    print("\nNext: use this R_map and s inside teleop loop:\n"
+          "  dp_base = s * R_map @ dp_pika_world\n")
+
+    return calib
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--device_key", type=str, default="WM0")
+    ap.add_argument("--port", type=str, default="/dev/ttyUSB0")
+    ap.add_argument(
+        "--pos_unit",
+        choices=["m", "mm"],
+        default="m",
+        help="Position unit returned by SDK get_pose(): m or mm",
+    )
+    ap.add_argument("--startup_timeout_s", type=float, default=5.0, help="Wait timeout for first pose after connect")
+    ap.add_argument("--pose_poll_hz", type=float, default=60.0, help="Polling frequency while waiting for pose")
+    ap.add_argument("--out", type=str, default="calib.json")
+    ap.add_argument("--avg_secs", type=float, default=0.25)
+    ap.add_argument("--min_move_m", type=float, default=0.02)
+    ap.add_argument("--desired_robot_move_m", type=float, default=0.05)
+
+    # Robot base axis convention override (optional)
+    ap.add_argument("--x_axis", nargs=3, type=float, default=[1,0,0], help="Robot base +X unit vector (default forward)")
+    ap.add_argument("--y_axis", nargs=3, type=float, default=[0,1,0], help="Robot base +Y unit vector (default left)")
+    ap.add_argument("--z_axis", nargs=3, type=float, default=[0,0,1], help="Robot base +Z unit vector (default up)")
+
+    args = ap.parse_args()
+
+    cfg = CalibConfig(
+        x_vec=np.array(args.x_axis, dtype=np.float64),
+        y_vec=np.array(args.y_axis, dtype=np.float64),
+        z_vec=np.array(args.z_axis, dtype=np.float64),
+        avg_secs=args.avg_secs,
+        min_move_m=args.min_move_m,
+        desired_robot_move_m=args.desired_robot_move_m,
+    )
+    cfg = validate_and_orthonormalize_axes(cfg)
+
+    tracker = PikaAdapter(
+        device_key=args.device_key,
+        port=args.port,
+        pos_unit=args.pos_unit,
+        startup_timeout_s=args.startup_timeout_s,
+        poll_hz=args.pose_poll_hz,
+    )
+    try:
+        calibrate_R_s(tracker, args.out, cfg)
+    finally:
+        tracker.close()
+
+
+if __name__ == "__main__":
+    main()
