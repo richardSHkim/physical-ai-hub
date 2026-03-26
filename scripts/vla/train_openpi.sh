@@ -27,14 +27,14 @@ cd "${OPENPI_ROOT}"
 
 if [[ ! -f "${PIPER_DATASET_DIR}/meta/info.json" ]]; then
     echo "[ERROR] Staged dataset not found at ${PIPER_DATASET_DIR}" >&2
-    echo "  Run: bash scripts/vla/prepare_openpi.sh" >&2
+    echo "  Run: bash vla/openpi/openpi/examples/piper/prepare_dataset.sh" >&2
     echo "  Or set PIPER_STAGED_DATASET to a valid directory." >&2
     exit 1
 fi
 
 if [[ ! -f "${PIPER_NORM_STATS_PATH}" ]]; then
     echo "[ERROR] Norm stats not found at ${PIPER_NORM_STATS_PATH}" >&2
-    echo "  Run: bash scripts/vla/compute_norm_stats_openpi.sh" >&2
+    echo "  Run: bash vla/openpi/openpi/examples/piper/compute_norm_stats.sh" >&2
     exit 1
 fi
 
