@@ -1,4 +1,4 @@
-"""Shared PIKA Sense utilities used by check_pika.py and check_pika_dual.py."""
+"""Shared PIKA Sense utilities used by check_single.py and check_dual.py."""
 
 import math
 

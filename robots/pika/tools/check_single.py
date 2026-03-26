@@ -2,7 +2,7 @@ import time
 
 from pika import sense
 
-from pika_utils import format_pose_6d
+from utils import format_pose_6d
 
 PORT = "/dev/ttyUSB0"  # 실제 포트로 변경
 dev = sense(PORT)

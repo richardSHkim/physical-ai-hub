@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-PIKA -> PiPER teleoperation using calibration result from scripts/calibration/pika_calibration.py.
+PIKA -> PiPER teleoperation using calibration result from tools/calibrate.py.
 
 Mapping:
   dp_base = s * R_map @ dp_pika_world
@@ -28,7 +28,7 @@ CALIBRATION_DIR = Path(__file__).resolve().parent.parent / "calibration"
 if str(CALIBRATION_DIR) not in sys.path:
     sys.path.insert(0, str(CALIBRATION_DIR))
 
-from pika_calibration import PikaAdapter
+from calibrate import PikaAdapter
 try:
     import termios
 except Exception:
