@@ -46,7 +46,7 @@ scripts/<category>/<script>.sh  →  <module>/tools/<tool>.py
 | 기호 | 의미 | 폴더 |
 |------|------|------|
 | 🟢 | 자체 개발 | `robots/`, `rollout/` |
-| 🟣 | submodule + 우리 코드 | `vla/openpi/`, `vla/gr00t/`, `eval/` |
+| 🟣 | submodule + 우리 코드 | `vla/openpi/`, `vla/gr00t/`, `simulation/` |
 | 🟡 | 설정·스크립트만 | `data/` |
 
 ### Docker 서비스 구성
@@ -56,7 +56,7 @@ scripts/<category>/<script>.sh  →  <module>/tools/<tool>.py
 | piper | ubuntu:22.04 | - | - | network_mode: host, privileged (CAN 통신) |
 | openpi | nvidia/cuda:12.1 | all | 8000 | inference 서버 |
 | gr00t | nvidia/cuda:12.1 | all | 8001 | inference 서버 |
-| leisaac | nvidia/cuda:12.1 | all | - | Isaac Sim eval |
+| leisaac | nvidia/cuda:12.1 | all | - | Isaac Sim simulation |
 
 ### Rollout 클라이언트 패턴
 
@@ -87,12 +87,12 @@ VAR="${ENV_VAR:-default_value}"   # ← 여기만 수정
 ```
 feat(robots/piper): add piper_follower lerobot package
 chore(docker): update openpi CUDA base to 12.1
-chore(submodule): bump eval/leisaac to abc1234
+chore(submodule): bump simulation/leisaac to abc1234
 ```
 
 ### 핵심 규칙
 
-- **모듈 독립성**: 각 `vla/`, `eval/` 폴더는 다른 폴더를 import하지 않음
+- **모듈 독립성**: 각 `vla/`, `simulation/` 폴더는 다른 폴더를 import하지 않음
 - **프레임워크 우선**: upstream을 그대로 사용, 자체 추상화 금지
 - **패키지 관리**: `pip` 대신 `uv pip` 사용
 - **Submodule 고정**: `git submodule update --remote` 사용 금지. 항상 특정 커밋 SHA 고정

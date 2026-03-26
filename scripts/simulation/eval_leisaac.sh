@@ -15,7 +15,7 @@ EVAL_POLICY_PORT="${EVAL_POLICY_PORT:-8000}"
 EVAL_LANGUAGE_INSTRUCTION="${EVAL_LANGUAGE_INSTRUCTION:-Lift the red cube up.}"
 EVAL_VIDEO_DIR="${EVAL_VIDEO_DIR:-outputs/leisaac/policy_inference_videos}"
 
-LEISAAC_ROOT="$(cd "$(dirname "$0")/../../eval/leisaac" && pwd)"
+LEISAAC_ROOT="$(cd "$(dirname "$0")/../../simulation/leisaac" && pwd)"
 [ ! -x "${PYTHON_BIN}" ] && PYTHON_BIN="python"
 export PYTHONPATH="${LEISAAC_ROOT}/source/leisaac:${PYTHONPATH:-}"
 export LEISAAC_ASSETS_ROOT

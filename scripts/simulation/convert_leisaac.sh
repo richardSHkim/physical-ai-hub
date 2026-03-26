@@ -12,7 +12,7 @@ LEROBOT_ROOT="${LEROBOT_ROOT:-datasets/richardshkim/piper_banana_v2}"
 OUTPUT_HDF5="${OUTPUT_HDF5:-outputs/leisaac/piper_banana_v2_isaaclab.hdf5}"
 TASK_TYPE="${TASK_TYPE:-piperleader}"
 
-LEISAAC_ROOT="$(cd "$(dirname "$0")/../../eval/leisaac" && pwd)"
+LEISAAC_ROOT="$(cd "$(dirname "$0")/../../simulation/leisaac" && pwd)"
 [ ! -x "${PYTHON_BIN}" ] && PYTHON_BIN="python"
 export PYTHONPATH="${LEISAAC_ROOT}/source/leisaac:${PYTHONPATH:-}"
 export LEISAAC_ASSETS_ROOT

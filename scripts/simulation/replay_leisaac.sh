@@ -13,7 +13,7 @@ REPLAY_TASK_TYPE="${REPLAY_TASK_TYPE:-piperleader}"
 REPLAY_DATASET_FILE="${REPLAY_DATASET_FILE:-outputs/leisaac/piper_banana_v2_isaaclab.hdf5}"
 REPLAY_VIDEO_DIR="${REPLAY_VIDEO_DIR:-outputs/leisaac/piper_replay_videos}"
 
-LEISAAC_ROOT="$(cd "$(dirname "$0")/../../eval/leisaac" && pwd)"
+LEISAAC_ROOT="$(cd "$(dirname "$0")/../../simulation/leisaac" && pwd)"
 [ ! -x "${PYTHON_BIN}" ] && PYTHON_BIN="python"
 export PYTHONPATH="${LEISAAC_ROOT}/source/leisaac:${PYTHONPATH:-}"
 export LEISAAC_ASSETS_ROOT
