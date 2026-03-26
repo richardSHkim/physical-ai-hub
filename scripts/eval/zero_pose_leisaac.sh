@@ -8,7 +8,7 @@ set -a
 source "$(dirname "$0")/../../envs/.env.leisaac"
 set +a
 
-ZERO_TASK="${ZERO_TASK:-LeIsaac-PiPER-LiftCube-v0}"
+ZERO_TASK="${ZERO_TASK:-${LEISAAC_TASK}}"
 ZERO_TASK_TYPE="${ZERO_TASK_TYPE:-piperleader}"
 
 LEISAAC_ROOT="$(cd "$(dirname "$0")/../../eval/leisaac" && pwd)"

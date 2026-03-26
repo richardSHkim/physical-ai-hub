@@ -8,7 +8,7 @@ set -a
 source "$(dirname "$0")/../../envs/.env.leisaac"
 set +a
 
-REPLAY_TASK="${REPLAY_TASK:-LeIsaac-PiPER-LiftCube-v0}"
+REPLAY_TASK="${REPLAY_TASK:-${LEISAAC_TASK}}"
 REPLAY_TASK_TYPE="${REPLAY_TASK_TYPE:-piperleader}"
 REPLAY_DATASET_FILE="${REPLAY_DATASET_FILE:-outputs/leisaac/piper_banana_v2_isaaclab.hdf5}"
 REPLAY_VIDEO_DIR="${REPLAY_VIDEO_DIR:-outputs/leisaac/piper_replay_videos}"

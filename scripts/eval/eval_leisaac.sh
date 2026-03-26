@@ -8,7 +8,7 @@ set -a
 source "$(dirname "$0")/../../envs/.env.leisaac"
 set +a
 
-EVAL_TASK="${EVAL_TASK:-LeIsaac-PiPER-LiftCube-v0}"
+EVAL_TASK="${EVAL_TASK:-${LEISAAC_TASK}}"
 EVAL_POLICY_TYPE="${EVAL_POLICY_TYPE:-openpi}"
 EVAL_POLICY_HOST="${EVAL_POLICY_HOST:-localhost}"
 EVAL_POLICY_PORT="${EVAL_POLICY_PORT:-8000}"
