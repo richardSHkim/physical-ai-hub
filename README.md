@@ -1,6 +1,6 @@
 # Physical AI Hub
 
-로봇 학습 파이프라인 통합 허브 — 데이터 수집, VLA 학습, 시뮬레이션 평가, 실물 롤아웃을 하나의 레포에서 관리합니다.
+로봇 학습 파이프라인 통합 허브 — 데이터 수집 → VLA 학습 → 시뮬레이션 평가 → 실물 롤아웃
 
 ## 지원 현황
 
@@ -9,38 +9,104 @@
 | 로봇 | Agilex PiPER (follower / leader / bi) | ✅ |
 | VLA | OpenPI | ✅ |
 | VLA | Isaac-GR00T | ✅ |
-| Eval | LeIsaac | ✅ |
-| Eval | IsaacSim / IsaacLab | 🔧 보조 |
-
-## Submodule 현황
-
-| 경로 | Upstream | Fork | 고정 커밋 |
-|------|----------|------|----------|
-| `vla/openpi/openpi/` | Physical-Intelligence/openpi | - | TBD |
-| `vla/gr00t/Isaac-GR00T/` | NVIDIA/Isaac-GR00T | - | TBD |
-| `eval/LeIsaac/` | `<your-org>/LeIsaac` | Yes | TBD |
+| 시뮬레이션 | LeIsaac (Isaac Sim) | ✅ |
 
 ## 퀵스타트
 
-[docs/quickstart.md](docs/quickstart.md)를 참고하세요.
+### 1. 클론 & 서브모듈
+
+```bash
+git clone --recurse-submodules <repo-url>
+cd physical-ai-hub
+```
+
+### 2. 환경변수 설정
+
+```bash
+cp envs/.env.base.example envs/.env.base
+# envs/.env.base 에 HF_TOKEN, WANDB_API_KEY 입력
+```
+
+### 3. Docker 빌드
+
+```bash
+docker compose build piper     # 로봇 제어
+docker compose build openpi    # OpenPI 학습 & 서빙
+docker compose build gr00t     # GR00T 학습 & 서빙
+docker compose build leisaac   # Isaac Sim 시뮬레이션
+```
+
+## 파이프라인 흐름
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│  1. 데이터    │ →  │  2. VLA 학습  │ →  │ 3. 시뮬평가   │ →  │ 4. 실물롤아웃 │
+│  수집/텔레옵   │    │  (OpenPI등)  │    │  (LeIsaac)   │    │ (inference)  │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+ scripts/data/      scripts/vla/      scripts/simulation/ scripts/rollout/
+```
+
+### 1. 데이터 수집 (piper 컨테이너)
+
+```bash
+bash scripts/data/teleoperate_piper.sh
+bash scripts/data/record_piper.sh
+```
+
+### 2. VLA 학습 (openpi 컨테이너)
+
+```bash
+bash scripts/vla/train_openpi.sh
+```
+
+### 3. 시뮬레이션 평가 (leisaac + openpi/gr00t 컨테이너)
+
+```bash
+bash scripts/vla/serve_openpi.sh          # 서버 기동
+bash scripts/simulation/eval_leisaac.sh   # 시뮬레이션 평가
+```
+
+### 4. 실물 롤아웃 (piper + openpi/gr00t 컨테이너)
+
+```bash
+bash scripts/vla/serve_openpi.sh        # 서버 기동
+bash scripts/rollout/rollout_openpi.sh  # 롤아웃
+```
 
 ## 디렉토리 구조
 
 ```
 physical-ai-hub/
-├── scripts/        # 모든 실행 진입점 (shell script)
-├── robots/         # lerobot 호환 로봇 패키지
-├── data/           # LeRobot V3 데이터 도구
-├── vla/            # VLA 프레임워크 (openpi, gr00t)
-├── eval/           # 시뮬레이션 평가 (LeIsaac)
-├── rollout/        # 실물 롤아웃 inference loop
-├── docker/         # 서비스별 Dockerfile
-├── envs/           # 환경변수 파일
-└── docs/           # 문서
+├── scripts/          # 모든 실행 진입점 (shell)
+│   ├── data/         #   데이터 수집·텔레옵
+│   ├── vla/          #   학습·서빙
+│   ├── simulation/   #   시뮬레이션 평가
+│   ├── rollout/      #   실물 롤아웃
+│   └── robots/       #   로봇 셋업 유틸
+├── robots/           # lerobot 호환 로봇 패키지
+├── rollout/          # inference loop
+├── data/             # LeRobot V3 데이터 도구
+├── vla/              # VLA 프레임워크
+│   ├── openpi/       #   submodule + tools/
+│   └── gr00t/        #   submodule + tools/
+├── simulation/       # 시뮬레이션 평가 (LeIsaac)
+├── docker/           # 서비스별 Dockerfile
+└── envs/             # 환경변수 (.env.base + .env.<service>)
 ```
 
-## 새 로봇/VLA 추가
+## Docker 서비스
 
-- [새 로봇 추가 가이드](docs/add_robot.md)
-- [새 VLA 추가 가이드](docs/add_vla.md)
-- [Submodule & Fork 운영 가이드](docs/submodule_fork_guide.md)
+| 서비스 | GPU | 포트 | 용도 |
+|--------|-----|------|------|
+| piper | - | host | 로봇 제어 (CAN 통신, privileged) |
+| openpi | all | 8000 | OpenPI 학습 & 서빙 |
+| gr00t | all | 8001 | GR00T 학습 & 서빙 |
+| leisaac | all | - | Isaac Sim 시뮬레이션 |
+
+## 환경변수
+
+- `envs/.env.base` — 공통 시크릿 (HF_TOKEN, WANDB_API_KEY) ← **gitignore**
+- `envs/.env.piper` — PiPER 로봇 설정
+- `envs/.env.openpi` — OpenPI 설정
+- `envs/.env.gr00t` — GR00T 설정
+- `envs/.env.leisaac` — LeIsaac 시뮬레이션 설정
