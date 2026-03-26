@@ -13,3 +13,6 @@
 [submodule "simulation/IsaacLab"]
 	path = simulation/IsaacLab
 	url = https://github.com/isaac-sim/IsaacLab.git
+[submodule "simulation/piper_isaac_sim"]
+	path = simulation/piper_isaac_sim
+	url = https://github.com/richardSHkim/piper_isaac_sim.git
