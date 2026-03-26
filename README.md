@@ -61,6 +61,13 @@ bash scripts/vla/train_openpi.sh
 
 ### 3. 시뮬레이션 평가 (leisaac + openpi/gr00t 컨테이너)
 
+piper task를 로드하려면 먼저 URDF 에셋을 leisaac assets 경로로 복사합니다.
+
+```bash
+cp -r simulation/piper_isaac_sim/piper_description/urdf/piper_description_v100_realsense_camera_v2 \
+      simulation/leisaac/assets/piper_description/urdf/
+```
+
 ```bash
 bash scripts/vla/serve_openpi.sh          # 서버 기동
 bash scripts/simulation/eval_leisaac.sh   # 시뮬레이션 평가
@@ -89,7 +96,9 @@ physical-ai-hub/
 ├── vla/              # VLA 프레임워크
 │   ├── openpi/       #   submodule + tools/
 │   └── gr00t/        #   submodule + tools/
-├── simulation/       # 시뮬레이션 평가 (LeIsaac)
+├── simulation/       # 시뮬레이션 평가
+│   ├── leisaac/      #   submodule (LeIsaac)
+│   └── piper_isaac_sim/ #   submodule (PiPER URDF 에셋)
 ├── docker/           # 서비스별 Dockerfile
 └── envs/             # 환경변수 (.env.base + .env.<service>)
 ```
