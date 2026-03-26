@@ -64,6 +64,7 @@ bash scripts/vla/train_openpi.sh
 piper task를 로드하려면 먼저 URDF 에셋을 leisaac assets 경로로 복사합니다.
 
 ```bash
+mkdir -p simulation/leisaac/assets/piper_description/urdf
 cp -r simulation/piper_isaac_sim/piper_description/urdf/piper_description_v100_realsense_camera_v2 \
       simulation/leisaac/assets/piper_description/urdf/
 ```
