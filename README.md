@@ -85,6 +85,66 @@ bash scripts/vla/serve_openpi.sh          # 서버 기동
 bash scripts/simulation/eval_leisaac.sh   # 시뮬레이션 평가
 ```
 
+#### Isaac Sim CUDA/PhysX 트러블슈팅
+
+다음과 같은 오류가 발생하면, 개별 로봇 asset 문제보다 `GPU PhysX / RTX / Omniverse` 런타임 상태 이상을 먼저 의심합니다.
+
+- `PhysX error: Fetching GPU Narrowphase failed! 700`
+- `cudaErrorIllegalAddress`
+- `PhysX Internal CUDA error. Simulation cannot continue! Error code 700`
+- `vkCreateRayTracingPipelinesKHR failed`
+- `omni.physx.tensors.plugin` 연쇄 CUDA 오류
+
+로그 해석 기준:
+
+- `omni.physx.plugin`의 `CUDA error 700` 이후 `omni.physx.tensors.plugin` 메모리 할당 실패, 그리고 `RTX` / `Vulkan` / `ray tracing pipeline` 실패가 이어지면 런타임 문제일 가능성이 높습니다.
+- 반대로 `prim not found`, `joint not found`, `invalid articulation`, `USD load` 실패처럼 asset 로딩 관련 오류가 먼저 나오면 asset 문제를 우선 확인합니다.
+
+빠른 원인 분리:
+
+- PiPER와 SO-101이 둘 다 같은 CUDA 오류로 실패하면 PiPER asset 자체보다는 Isaac Sim 런타임, GPU PhysX, RTX camera / Vulkan, Omniverse cache 상태를 먼저 봅니다.
+- 카메라 없는 최소 GPU 예제는 정상인데 카메라를 켠 예제만 죽으면 RTX 렌더링 경로를 의심합니다.
+- 카메라 없이도 바로 `PhysX error 700`이 나면 GPU PhysX 런타임 문제 쪽일 가능성이 큽니다.
+
+가장 먼저 시도할 복구 명령:
+
+```bash
+pkill -9 -f isaac
+pkill -9 -f omni
+pkill -9 -f kit
+pkill -9 -f simulation_app
+pkill -9 -f python.sh
+sleep 3
+rm -rf /isaac-sim/kit/cache/Kit /tmp/OmniverseKit* /tmp/carb.*
+```
+
+1차 조치 후에도 동일하면 Omniverse 사용자 상태 디렉터리와 mount 상태를 점검합니다.
+
+- `/root/.cache/ov`
+- `/root/.nvidia-omniverse/config`
+- `/root/.nvidia-omniverse/logs`
+- `/root/.local/share/ov/data`
+
+```bash
+mount | grep -E '/root/.cache/ov|/root/.nvidia-omniverse|/root/.local/share/ov'
+cat /proc/mounts | grep -E '/root/.cache/ov|/root/.nvidia-omniverse|/root/.local/share/ov'
+```
+
+주의할 점:
+
+- 컨테이너를 새로 만들어도 host volume, bind mount, `/tmp`, 사용자 설정 디렉터리가 재사용되면 문제가 그대로 남을 수 있습니다.
+- 비정상 종료 뒤에는 재실행 전에 프로세스 종료와 캐시 정리를 먼저 수행하는 편이 안전합니다.
+- 장애가 재발하면 첫 치명 에러, 실행 명령, PiPER/SO-101 재현 여부, 캐시 정리 후 해결 여부를 함께 기록해두면 다음 분석이 빨라집니다.
+
+실전 체크리스트:
+
+1. 첫 에러가 `PhysX GPU ... 700`인지 확인
+2. PiPER와 SO-101 둘 다 재현되는지 확인
+3. Isaac/Omni 프로세스 정리
+4. `Kit cache`와 `/tmp/carb.*` 정리
+5. 재실행
+6. 여전히 동일하면 사용자 상태 디렉터리와 bind mount 점검
+
 ### 4. 실물 롤아웃 (piper + openpi/gr00t 컨테이너)
 
 ```bash
