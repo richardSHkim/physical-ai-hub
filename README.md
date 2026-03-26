@@ -61,7 +61,18 @@ bash scripts/vla/train_openpi.sh
 
 ### 3. 시뮬레이션 평가 (leisaac + openpi/gr00t 컨테이너)
 
-piper task를 로드하려면 먼저 URDF 에셋을 leisaac assets 경로로 복사합니다.
+piper task를 로드하려면 먼저 씬 에셋과 URDF 에셋을 준비합니다.
+
+**1) 씬 에셋 다운로드** (HuggingFace)
+
+```bash
+huggingface-cli download \
+    --local-dir simulation/leisaac \
+    --include "assets/**" \
+    LightwheelAI/leisaac_env
+```
+
+**2) PiPER URDF 에셋 복사** (piper_isaac_sim 서브모듈)
 
 ```bash
 mkdir -p simulation/leisaac/assets/piper_description/urdf
