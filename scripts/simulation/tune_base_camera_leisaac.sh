@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
 # CONTAINER: leisaac
 #
-# LeIsaac 시뮬레이션에서 정책 평가 실행
+# Piper 베이스 카메라 오프셋 인터랙티브 튜닝
 #
 # 변경할 상수:
 set -a
 source "$(dirname "$0")/../../envs/.env.leisaac"
 set +a
 
-EVAL_TASK="${EVAL_TASK:-${LEISAAC_TASK}}"
-EVAL_POLICY_TYPE="${EVAL_POLICY_TYPE:-openpi}"
-EVAL_POLICY_HOST="${EVAL_POLICY_HOST:-localhost}"
-EVAL_POLICY_PORT="${EVAL_POLICY_PORT:-8000}"
-EVAL_LANGUAGE_INSTRUCTION="${EVAL_LANGUAGE_INSTRUCTION:-Lift the red cube up.}"
-EVAL_VIDEO_DIR="${EVAL_VIDEO_DIR:-outputs/leisaac/policy_inference_videos}"
+TUNE_TASK="${TUNE_TASK:-${LEISAAC_TASK}}"
+TUNE_TASK_TYPE="${TUNE_TASK_TYPE:-piperleader}"
 LEISAAC_DEVICE="${LEISAAC_DEVICE:-cuda:0}"
 LEISAAC_ENABLE_CAMERAS="${LEISAAC_ENABLE_CAMERAS:-1}"
 LEISAAC_HEADLESS="${LEISAAC_HEADLESS:-${ISAAC_HEADLESS:-1}}"
@@ -37,13 +33,9 @@ case "${LEISAAC_HEADLESS,,}" in
     1|true|yes|on) APP_ARGS+=(--headless) ;;
 esac
 
-exec "${PYTHON_BIN}" scripts/evaluation/policy_inference.py \
-    --task "${EVAL_TASK}" \
-    --policy_type "${EVAL_POLICY_TYPE}" \
-    --policy_host "${EVAL_POLICY_HOST}" \
-    --policy_port "${EVAL_POLICY_PORT}" \
-    --policy_language_instruction "${EVAL_LANGUAGE_INSTRUCTION}" \
-    --save_eval_video_dir "${EVAL_VIDEO_DIR}" \
+exec "${PYTHON_BIN}" scripts/evaluation/piper_base_camera_tuner.py \
+    --task "${TUNE_TASK}" \
+    --task_type "${TUNE_TASK_TYPE}" \
     "${APP_ARGS[@]}" \
     "${KIT_ARGS[@]}" \
     "$@"

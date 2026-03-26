@@ -118,6 +118,26 @@ sleep 3
 rm -rf /isaac-sim/kit/cache/Kit /tmp/OmniverseKit* /tmp/carb.*
 ```
 
+런타임 문제를 빠르게 분리하려면, 이제 시뮬레이션 wrapper에서 디바이스와 카메라를 환경변수로 바로 바꿀 수 있습니다.
+
+```bash
+# 1) RTX 카메라 경로만 끄고 확인
+LEISAAC_ENABLE_CAMERAS=0 bash scripts/simulation/zero_pose_leisaac.sh
+
+# 2) GPU PhysX 자체가 문제인지 CPU로 확인
+LEISAAC_DEVICE=cpu LEISAAC_ENABLE_CAMERAS=0 bash scripts/simulation/zero_pose_leisaac.sh
+
+# 3) 평가 스크립트도 동일하게 적용 가능
+LEISAAC_ENABLE_CAMERAS=0 bash scripts/simulation/eval_leisaac.sh
+LEISAAC_DEVICE=cpu LEISAAC_ENABLE_CAMERAS=0 bash scripts/simulation/eval_leisaac.sh
+```
+
+해석 기준:
+
+- `LEISAAC_ENABLE_CAMERAS=0`에서는 살고, 기본값(`LEISAAC_ENABLE_CAMERAS=1`)에서만 죽으면 RTX camera / rendering 경로를 우선 의심합니다.
+- `LEISAAC_DEVICE=cpu LEISAAC_ENABLE_CAMERAS=0`에서도 죽으면 단순 GPU PhysX 문제보다 asset / task 초기화 쪽 로그를 다시 확인합니다.
+- CPU + no-camera는 되는데 기본 GPU 모드에서만 `PhysX error 700`이 나면 GPU PhysX 또는 드라이버/캐시 상태 쪽 가능성이 큽니다.
+
 1차 조치 후에도 동일하면 Omniverse 사용자 상태 디렉터리와 mount 상태를 점검합니다.
 
 - `/root/.cache/ov`
