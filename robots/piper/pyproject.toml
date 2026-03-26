@@ -1,13 +1,54 @@
-[build-system]
-requires = ["setuptools>=64", "setuptools-scm>=8"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "lerobot-piper"
+name = "piper"
 version = "0.1.0"
-description = "LeRobot-compatible package for Agilex PiPER robot"
-requires-python = ">=3.10"
-dependencies = []
+description = "LeRobot packages for AgileX PiPER robot arms"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "lerobot==0.5.0",
+    "pyrealsense2>=2.56.5.9235",
+    "piper-common",
+    "lerobot-robot-bi-piper-follower",
+    "lerobot-robot-piper-follower",
+    "lerobot-teleoperator-bi-piper-leader",
+    "lerobot-teleoperator-piper-leader",
+]
 
-[tool.setuptools.packages.find]
-include = ["lerobot_piper*"]
+[tool.uv.workspace]
+members = [
+    "piper_common",
+    "lerobot_robot_bi_piper_follower",
+    "lerobot_robot_piper_follower",
+    "lerobot_teleoperator_bi_piper_leader",
+    "lerobot_teleoperator_piper_leader",
+]
+
+[tool.uv.sources]
+piper-common = { workspace = true, editable = true }
+lerobot-robot-bi-piper-follower = { workspace = true, editable = true }
+lerobot-robot-piper-follower = { workspace = true, editable = true }
+lerobot-teleoperator-bi-piper-leader = { workspace = true, editable = true }
+lerobot-teleoperator-piper-leader = { workspace = true, editable = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11.0",
+    "pytest>=8.0.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = [
+    "piper_common/src",
+    "lerobot_robot_piper_follower/src",
+    "lerobot_robot_bi_piper_follower/src",
+    "lerobot_teleoperator_piper_leader/src",
+    "lerobot_teleoperator_bi_piper_leader/src",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

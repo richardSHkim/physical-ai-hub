@@ -1,0 +1,17 @@
+[project]
+name = "lerobot_teleoperator_bi_piper_leader"
+version = "0.1.0"
+description = "LeRobot Teleoperator plugin for AgileX bi-PiPER leader arms"
+readme = "README.md"
+authors = [
+    { name = "richardSHkim", email = "shkim@superb-ai.com" }
+]
+requires-python = ">=3.12"
+dependencies = ["lerobot==0.5.0", "piper-common", "lerobot-teleoperator-piper-leader==0.1.0", "piper_sdk==0.6.1"]
+
+[project.scripts]
+lerobot-teleoperator-bi-piper-leader = "lerobot_teleoperator_bi_piper_leader:main"
+
+[build-system]
+requires = ["uv_build>=0.9.9,<0.10.0"]
+build-backend = "uv_build"
