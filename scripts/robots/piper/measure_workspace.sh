@@ -6,7 +6,7 @@ set -a
 source "$(dirname "$0")/../../../envs/.env.piper"
 set +a
 
-CAN_NAME="${CAN_INTERFACE:-can0}"
+CAN_NAME="${1:?Usage: $0 <can_name>}"
 PERIOD="${WS_PERIOD:-0.05}"                 # 샘플링 주기 (초)
 PRINT_PERIOD="${WS_PRINT_PERIOD:-0.5}"      # 콘솔 출력 주기 (초)
 MARGIN="${WS_MARGIN:-0.0}"                  # 안전 마진 (미터)
