@@ -4,9 +4,8 @@
 # LeIsaac 시뮬레이션에서 정책 평가 실행
 #
 # 변경할 상수:
-set -a
-source "$(dirname "$0")/../../envs/.env.leisaac"
-set +a
+source "$(dirname "${BASH_SOURCE[0]}")/_leisaac_common.sh"
+set -euo pipefail
 
 EVAL_TASK="${EVAL_TASK:-LeIsaac-PiPER-LiftCube-v0}"
 EVAL_POLICY_TYPE="${EVAL_POLICY_TYPE:-openpi}"
@@ -14,18 +13,8 @@ EVAL_POLICY_HOST="${EVAL_POLICY_HOST:-localhost}"
 EVAL_POLICY_PORT="${EVAL_POLICY_PORT:-8000}"
 EVAL_LANGUAGE_INSTRUCTION="${EVAL_LANGUAGE_INSTRUCTION:-Lift the red cube up.}"
 EVAL_VIDEO_DIR="${EVAL_VIDEO_DIR:-outputs/leisaac/policy_inference_videos}"
-LIVESTREAM_MODE="${LIVESTREAM_MODE:-2}"
 
-LEISAAC_ROOT="$(cd "$(dirname "$0")/../../eval/leisaac" && pwd)"
-
-cd "${LEISAAC_ROOT}"
-
-KIT_ARGS=()
-if [ "${LIVESTREAM_MODE}" != "0" ]; then
-    KIT_ARGS=("--kit_args=--/app/livestream/outDirectory=${LIVESTREAM_OUT_DIR:-/tmp/isaac-livestream}")
-fi
-
-exec python scripts/evaluation/policy_inference.py \
+"${PYTHON_BIN}" scripts/evaluation/policy_inference.py \
     --task "${EVAL_TASK}" \
     --policy_type "${EVAL_POLICY_TYPE}" \
     --policy_host "${EVAL_POLICY_HOST}" \
