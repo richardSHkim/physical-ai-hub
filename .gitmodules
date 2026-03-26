@@ -9,7 +9,7 @@
 [submodule "simulation/leisaac"]
 	path = simulation/leisaac
 	url = https://github.com/richardSHkim/leisaac.git
-	branch = dev/piper-lift-cube
+	branch = main
 [submodule "simulation/IsaacLab"]
 	path = simulation/IsaacLab
 	url = https://github.com/isaac-sim/IsaacLab.git
