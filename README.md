@@ -168,6 +168,7 @@ cat /proc/mounts | grep -E '/root/.cache/ov|/root/.nvidia-omniverse|/root/.local
 ### 4. 실물 롤아웃 (piper + openpi/gr00t 컨테이너)
 
 ```bash
+docker compose exec piper uv pip install --system -e /workspace/robots/piper
 bash scripts/vla/serve_openpi.sh        # 서버 기동
 bash scripts/rollout/rollout_openpi.sh  # 롤아웃
 ```

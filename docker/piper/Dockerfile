@@ -11,6 +11,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /workspace
 
 # robots/piper 패키지는 volume 마운트 후 설치
+# LiPo rollout 의존성은 robots/piper/pyproject.toml 에 포함됨
 # uv pip install --system -e /workspace/robots/piper
 
 CMD ["bash"]
