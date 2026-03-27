@@ -11,6 +11,6 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /workspace
 
 # GR00T 의존성은 submodule 기준으로 설치
-# uv pip install --system -e /workspace/vla/gr00t/Isaac-GR00T
+# uv pip install --system -e /workspace/vla/Isaac-GR00T
 
 CMD ["bash"]

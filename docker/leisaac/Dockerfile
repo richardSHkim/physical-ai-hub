@@ -11,6 +11,6 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /workspace
 
 # LeIsaac 의존성은 submodule 기준으로 설치
-# uv pip install --system -e /workspace/eval/LeIsaac
+# uv pip install --system -e /workspace/simulation/leisaac
 
 CMD ["bash"]

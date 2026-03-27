@@ -46,7 +46,7 @@ scripts/<category>/<script>.sh  →  <module>/tools/<tool>.py
 | 기호 | 의미 | 폴더 |
 |------|------|------|
 | 🟢 | 자체 개발 | `robots/`, `rollout/` |
-| 🟣 | submodule + 우리 코드 | `vla/openpi/`, `vla/gr00t/`, `simulation/` |
+| 🟣 | submodule + 우리 코드 | `vla/openpi/`, `vla/Isaac-GR00T/`, `vla/tools/`, `simulation/` |
 | 🟡 | 설정·스크립트만 | `data/` |
 
 ### Docker 서비스 구성

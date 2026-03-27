@@ -12,7 +12,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DATASET_PATH="${GR00T_DATASET_PATH:-datasets/richardshkim/piper_banana_v2_v2.1}"
 RUN_NAME="${GR00T_RUN_NAME:-gr00t_n_1d6_piper}"
 OUTPUT_DIR="${GR00T_OUTPUT_DIR:-outputs/Isaac-GR00T}/${RUN_NAME}"
-CONFIG_PATH="${GR00T_MODALITY_CONFIG_PATH:-vla/gr00t/tools/piper_modality_config.py}"
+CONFIG_PATH="${GR00T_MODALITY_CONFIG_PATH:-vla/tools/piper_modality_config.py}"
 BASE_MODEL="${GR00T_BASE_MODEL:-nvidia/GR00T-N1.6-3B}"
 NUM_GPUS="${GR00T_NUM_GPUS:-1}"
 MAX_STEPS="${GR00T_MAX_STEPS:-2000}"
@@ -32,7 +32,7 @@ fi
 
 if [[ ! -f "${CONFIG_PATH}" ]]; then
     echo "[ERROR] Modality config not found at ${CONFIG_PATH}" >&2
-    echo "  Create: vla/gr00t/tools/piper_modality_config.py" >&2
+    echo "  Create: vla/tools/piper_modality_config.py" >&2
     exit 1
 fi
 
