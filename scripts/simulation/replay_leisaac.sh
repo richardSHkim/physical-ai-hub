@@ -8,13 +8,22 @@ set -a
 source "$(dirname "$0")/../../envs/.env.leisaac"
 set +a
 
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+LEISAAC_OUTPUT_ROOT="${LEISAAC_OUTPUT_ROOT:-outputs/leisaac}"
 REPLAY_TASK="${REPLAY_TASK:-${LEISAAC_TASK}}"
 REPLAY_TASK_TYPE="${REPLAY_TASK_TYPE:-piperleader}"
-REPLAY_DATASET_FILE="${REPLAY_DATASET_FILE:-outputs/leisaac/piper_banana_v2_isaaclab.hdf5}"
-REPLAY_VIDEO_DIR="${REPLAY_VIDEO_DIR:-outputs/leisaac/piper_replay_videos}"
+REPLAY_DATASET_FILE="${REPLAY_DATASET_FILE:-${LEISAAC_OUTPUT_ROOT}/piper_banana_v2_isaaclab.hdf5}"
+REPLAY_VIDEO_DIR="${REPLAY_VIDEO_DIR:-${LEISAAC_OUTPUT_ROOT}/piper_replay_videos}"
 LEISAAC_DEVICE="${LEISAAC_DEVICE:-cuda:0}"
 LEISAAC_ENABLE_CAMERAS="${LEISAAC_ENABLE_CAMERAS:-1}"
 LEISAAC_HEADLESS="${LEISAAC_HEADLESS:-${ISAAC_HEADLESS:-1}}"
+
+if [[ "${REPLAY_DATASET_FILE}" != /* ]]; then
+    REPLAY_DATASET_FILE="${PROJECT_ROOT}/${REPLAY_DATASET_FILE}"
+fi
+if [[ "${REPLAY_VIDEO_DIR}" != /* ]]; then
+    REPLAY_VIDEO_DIR="${PROJECT_ROOT}/${REPLAY_VIDEO_DIR}"
+fi
 
 LEISAAC_ROOT="$(cd "$(dirname "$0")/../../simulation/leisaac" && pwd)"
 [ ! -x "${PYTHON_BIN}" ] && PYTHON_BIN="python"

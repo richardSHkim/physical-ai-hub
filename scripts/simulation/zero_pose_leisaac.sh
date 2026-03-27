@@ -8,11 +8,18 @@ set -a
 source "$(dirname "$0")/../../envs/.env.leisaac"
 set +a
 
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+LEISAAC_OUTPUT_ROOT="${LEISAAC_OUTPUT_ROOT:-outputs/leisaac}"
 ZERO_TASK="${ZERO_TASK:-${LEISAAC_TASK}}"
 ZERO_TASK_TYPE="${ZERO_TASK_TYPE:-piperleader}"
+ZERO_CAMERA_DIR="${ZERO_CAMERA_DIR:-${LEISAAC_OUTPUT_ROOT}/piper_zero_pose}"
 LEISAAC_DEVICE="${LEISAAC_DEVICE:-cuda:0}"
 LEISAAC_ENABLE_CAMERAS="${LEISAAC_ENABLE_CAMERAS:-1}"
 LEISAAC_HEADLESS="${LEISAAC_HEADLESS:-${ISAAC_HEADLESS:-1}}"
+
+if [[ "${ZERO_CAMERA_DIR}" != /* ]]; then
+    ZERO_CAMERA_DIR="${PROJECT_ROOT}/${ZERO_CAMERA_DIR}"
+fi
 
 LEISAAC_ROOT="$(cd "$(dirname "$0")/../../simulation/leisaac" && pwd)"
 [ ! -x "${PYTHON_BIN}" ] && PYTHON_BIN="python"
@@ -36,6 +43,7 @@ esac
 exec "${PYTHON_BIN}" scripts/evaluation/piper_zero_pose.py \
     --task "${ZERO_TASK}" \
     --task_type "${ZERO_TASK_TYPE}" \
+    --save_camera_dir "${ZERO_CAMERA_DIR}" \
     "${APP_ARGS[@]}" \
     "${KIT_ARGS[@]}" \
     "$@"

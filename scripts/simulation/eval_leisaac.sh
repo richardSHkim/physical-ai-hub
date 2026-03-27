@@ -8,15 +8,21 @@ set -a
 source "$(dirname "$0")/../../envs/.env.leisaac"
 set +a
 
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+LEISAAC_OUTPUT_ROOT="${LEISAAC_OUTPUT_ROOT:-outputs/leisaac}"
 EVAL_TASK="${EVAL_TASK:-${LEISAAC_TASK}}"
 EVAL_POLICY_TYPE="${EVAL_POLICY_TYPE:-openpi}"
 EVAL_POLICY_HOST="${EVAL_POLICY_HOST:-localhost}"
 EVAL_POLICY_PORT="${EVAL_POLICY_PORT:-8000}"
 EVAL_LANGUAGE_INSTRUCTION="${EVAL_LANGUAGE_INSTRUCTION:-Lift the red cube up.}"
-EVAL_VIDEO_DIR="${EVAL_VIDEO_DIR:-outputs/leisaac/policy_inference_videos}"
+EVAL_VIDEO_DIR="${EVAL_VIDEO_DIR:-${LEISAAC_OUTPUT_ROOT}/policy_inference_videos}"
 LEISAAC_DEVICE="${LEISAAC_DEVICE:-cuda:0}"
 LEISAAC_ENABLE_CAMERAS="${LEISAAC_ENABLE_CAMERAS:-1}"
 LEISAAC_HEADLESS="${LEISAAC_HEADLESS:-${ISAAC_HEADLESS:-1}}"
+
+if [[ "${EVAL_VIDEO_DIR}" != /* ]]; then
+    EVAL_VIDEO_DIR="${PROJECT_ROOT}/${EVAL_VIDEO_DIR}"
+fi
 
 LEISAAC_ROOT="$(cd "$(dirname "$0")/../../simulation/leisaac" && pwd)"
 [ ! -x "${PYTHON_BIN}" ] && PYTHON_BIN="python"
