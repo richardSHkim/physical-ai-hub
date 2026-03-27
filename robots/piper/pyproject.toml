@@ -6,12 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "lerobot==0.5.0",
+    "msgpack>=1.0.5",
     "pyrealsense2>=2.56.5.9235",
     "piper-common",
     "lerobot-robot-bi-piper-follower",
     "lerobot-robot-piper-follower",
     "lerobot-teleoperator-bi-piper-leader",
     "lerobot-teleoperator-piper-leader",
+    "websockets>=11.0",
 ]
 
 [tool.uv.workspace]
