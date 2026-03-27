@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import logging
 import time
 from typing import Any
@@ -25,31 +24,18 @@ class ActionChunkBuffer:
         *,
         fps: float,
         blend: int,
-        use_lipo: bool,
-        lipo_time_delay: int,
-        lipo_epsilon_blending: float,
-        lipo_epsilon_path: float,
-        solver_factory: Any | None = None,
     ) -> None:
         self._client = client
         self._dt = 1.0 / fps
         self._blend = blend
-        self._use_lipo = use_lipo
-        self._lipo_time_delay = lipo_time_delay
-        self._lipo_epsilon_blending = lipo_epsilon_blending
-        self._lipo_epsilon_path = lipo_epsilon_path
-        self._solver_factory = solver_factory
 
-        self._prev_output_chunk: Any | None = None
         self._current_exec_chunk: Any | None = None
-        self._lipo_solver: Any | None = None
         self._raw_chunk_size: int | None = None
         self._execution_horizon: int = 0
         self._step_in_cycle: int = 0
 
         self.last_response: dict[str, Any] | None = None
         self.last_infer_latency_ms: float | None = None
-        self.last_lipo_solve_ms: float | None = None
 
     @property
     def blend(self) -> int:
@@ -63,52 +49,11 @@ class ActionChunkBuffer:
     def execution_horizon(self) -> int:
         return self._execution_horizon
 
-    def _build_lipo_solver(self, chunk_size: int) -> Any:
-        if self._solver_factory is not None:
-            return self._solver_factory(
-                chunk_size=chunk_size,
-                blending_horizon=self._blend,
-                action_dim=7,
-                len_time_delay=self._lipo_time_delay,
-                dt=self._dt,
-                epsilon_blending=self._lipo_epsilon_blending,
-                epsilon_path=self._lipo_epsilon_path,
-            )
-
-        try:
-            action_lipo_module = importlib.import_module("action_lipo")
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "LiPo is enabled, but `action_lipo` could not be imported. "
-                "Install the piper uv environment dependencies first."
-            ) from exc
-        except Exception as exc:
-            raise RuntimeError(
-                "LiPo is enabled, but importing `action_lipo` failed. "
-                "Check that LiPo dependencies such as cvxpy, osqp, and scipy are installed."
-            ) from exc
-
-        return action_lipo_module.ActionLiPo(
-            solver="osqp",
-            chunk_size=chunk_size,
-            blending_horizon=self._blend,
-            action_dim=7,
-            len_time_delay=self._lipo_time_delay,
-            dt=self._dt,
-            epsilon_blending=self._lipo_epsilon_blending,
-            epsilon_path=self._lipo_epsilon_path,
-        )
-
     def _validate_chunk(self, action_chunk: Any) -> None:
         chunk_size = int(action_chunk.shape[0])
         if self._blend >= chunk_size:
             raise ValueError(
                 f"--blend must be smaller than the policy chunk size, got blend={self._blend}, chunk_size={chunk_size}"
-            )
-        if self._use_lipo and self._lipo_time_delay >= self._blend:
-            raise ValueError(
-                "--lipo-time-delay must satisfy 0 <= time_delay < blend when LiPo is enabled, "
-                f"got time_delay={self._lipo_time_delay}, blend={self._blend}"
             )
         if self._raw_chunk_size is not None and chunk_size != self._raw_chunk_size:
             raise ValueError(
@@ -122,50 +67,29 @@ class ActionChunkBuffer:
         action_chunk = action_dict_to_vector(response)
         self.last_response = response
         self.last_infer_latency_ms = (time.perf_counter() - infer_start) * 1000.0
-        self.last_lipo_solve_ms = None
 
         if action_chunk.ndim == 1:
             self._current_exec_chunk = action_chunk[None, :].copy()
             self._execution_horizon = 1
             self._step_in_cycle = 0
             self._raw_chunk_size = 1
-            self._prev_output_chunk = None
             return True
 
         self._validate_chunk(action_chunk)
         self._raw_chunk_size = int(action_chunk.shape[0])
         self._execution_horizon = self._raw_chunk_size - self._blend
 
-        output_chunk = action_chunk.copy()
-        if self._use_lipo:
-            if self._lipo_solver is None:
-                self._lipo_solver = self._build_lipo_solver(self._raw_chunk_size)
-            solve_start = time.perf_counter()
-            solved_chunk, _ = self._lipo_solver.solve(
-                output_chunk,
-                self._prev_output_chunk if self._prev_output_chunk is not None else output_chunk,
-                len_past_actions=self._blend if self._prev_output_chunk is not None else 0,
-            )
-            self.last_lipo_solve_ms = (time.perf_counter() - solve_start) * 1000.0
-            if solved_chunk is None:
-                raise RuntimeError("LiPo solve failed while processing the action chunk.")
-            output_chunk = solved_chunk
-
-        self._current_exec_chunk = output_chunk.copy()
-        self._prev_output_chunk = output_chunk.copy()
+        self._current_exec_chunk = action_chunk.copy()
         self._step_in_cycle = 0
         return True
 
     def reset(self) -> None:
-        self._prev_output_chunk = None
         self._current_exec_chunk = None
-        self._lipo_solver = None
         self._raw_chunk_size = None
         self._execution_horizon = 0
         self._step_in_cycle = 0
         self.last_response = None
         self.last_infer_latency_ms = None
-        self.last_lipo_solve_ms = None
         self._client.reset()
 
     def pop_action(self, observation: dict[str, Any]) -> tuple[Any, bool]:
@@ -221,25 +145,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional per-step joint delta clamp in radians.",
     )
-    parser.add_argument("--use-lipo", action="store_true", help="Use LiPo smoothing across overlapped action chunks.")
-    parser.add_argument(
-        "--lipo-time-delay",
-        type=int,
-        default=1,
-        help="LiPo time delay used when smoothing overlapped chunks.",
-    )
-    parser.add_argument(
-        "--lipo-epsilon-blending",
-        type=float,
-        default=0.02,
-        help="LiPo epsilon bound for the blending region.",
-    )
-    parser.add_argument(
-        "--lipo-epsilon-path",
-        type=float,
-        default=0.003,
-        help="LiPo epsilon bound outside the blending region.",
-    )
     return parser.parse_args()
 
 
@@ -270,10 +175,6 @@ def run_rollout(args: argparse.Namespace) -> None:
         client,
         fps=args.fps,
         blend=args.blend,
-        use_lipo=args.use_lipo,
-        lipo_time_delay=args.lipo_time_delay,
-        lipo_epsilon_blending=args.lipo_epsilon_blending,
-        lipo_epsilon_path=args.lipo_epsilon_path,
     )
 
     logger.info("Connected to OpenPI server at %s:%d", args.host, args.port)
@@ -303,18 +204,12 @@ def run_rollout(args: argparse.Namespace) -> None:
                     if chunk_buffer.last_infer_latency_ms is not None and fetched_new_chunk
                     else "-"
                 )
-                lipo_solve_ms = (
-                    f"{chunk_buffer.last_lipo_solve_ms:.1f}"
-                    if args.use_lipo and chunk_buffer.last_lipo_solve_ms is not None and fetched_new_chunk
-                    else "-"
-                )
                 logger.info(
-                    "step=%d fetched_chunk=%s remaining_in_cycle=%d infer_ms=%s lipo_solve_ms=%s chunk_size=%s execution_horizon=%d blend=%d",
+                    "step=%d fetched_chunk=%s remaining_in_cycle=%d infer_ms=%s chunk_size=%s execution_horizon=%d blend=%d",
                     step,
                     fetched_new_chunk,
                     remaining_in_cycle,
                     infer_ms,
-                    lipo_solve_ms,
                     chunk_buffer.raw_chunk_size,
                     chunk_buffer.execution_horizon,
                     chunk_buffer.blend,
