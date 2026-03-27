@@ -12,6 +12,13 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PIPER_STAGED_DATASET="${PIPER_STAGED_DATASET:-datasets/richardshkim/piper_banana_v2_openpi}"
 PIPER_CONFIG_NAME="${PIPER_CONFIG_NAME:-pi05_piper}"
 PIPER_ASSETS_BASE_DIR="${PIPER_ASSETS_BASE_DIR:-./assets}"
+PIPER_CHECKPOINT_BASE_DIR="${PIPER_CHECKPOINT_BASE_DIR:-outputs/openpi}"
+
+if [[ "${PIPER_CHECKPOINT_BASE_DIR}" = /* ]]; then
+    PIPER_CHECKPOINT_BASE_DIR_RESOLVED="${PIPER_CHECKPOINT_BASE_DIR}"
+else
+    PIPER_CHECKPOINT_BASE_DIR_RESOLVED="${PROJECT_ROOT}/${PIPER_CHECKPOINT_BASE_DIR}"
+fi
 
 if [[ "${PIPER_STAGED_DATASET}" = /* ]]; then
     PIPER_DATASET_DIR_RAW="${PIPER_STAGED_DATASET}"
@@ -48,4 +55,5 @@ exec env \
     --fsdp-devices "${PIPER_FSDP_DEVICES:-1}" \
     --data.repo-id "${PIPER_REPO_ID}" \
     --assets-base-dir "${PIPER_ASSETS_BASE_DIR}" \
+    --checkpoint-base-dir "${PIPER_CHECKPOINT_BASE_DIR_RESOLVED}" \
     "$@"
