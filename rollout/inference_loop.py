@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -37,9 +38,11 @@ class ActionChunkBuffer:
         self._raw_chunk_size: int | None = None
         self._execution_horizon: int = 0
         self._step_in_cycle: int = 0
+        self._prefetch: _PendingInference | None = None
 
         self.last_response: dict[str, Any] | None = None
         self.last_infer_latency_ms: float | None = None
+        self.last_prefetch_wait_ms: float | None = None
 
     @property
     def blend(self) -> int:
@@ -66,11 +69,23 @@ class ActionChunkBuffer:
             )
 
     def _start_new_cycle(self, observation: dict[str, Any]) -> bool:
-        infer_start = time.perf_counter()
-        response = self._client.infer(observation)
+        prefetch_wait_ms = 0.0
+        infer_latency_ms = 0.0
+        if self._prefetch is not None:
+            pending = self._prefetch
+            prefetch_wait_ms, response = pending.wait()
+            infer_latency_ms = pending.last_infer_latency_ms or 0.0
+            self._prefetch = None
+        else:
+            infer_start = time.perf_counter()
+            response = self._client.infer(observation)
+            infer_latency_ms = (time.perf_counter() - infer_start) * 1000.0
+            prefetch_wait_ms = infer_latency_ms
+
         action_chunk = action_dict_to_vector(response)
         self.last_response = response
-        self.last_infer_latency_ms = (time.perf_counter() - infer_start) * 1000.0
+        self.last_infer_latency_ms = infer_latency_ms
+        self.last_prefetch_wait_ms = prefetch_wait_ms
 
         if action_chunk.ndim == 1:
             self._current_exec_chunk = action_chunk[None, :].copy()
@@ -87,13 +102,26 @@ class ActionChunkBuffer:
         self._step_in_cycle = 0
         return True
 
+    def _maybe_start_prefetch(self, observation: dict[str, Any]) -> None:
+        if self._prefetch is not None:
+            return
+        if self._current_exec_chunk is None or self._raw_chunk_size is None:
+            return
+        if self._raw_chunk_size <= 1:
+            return
+        if self.remaining_in_cycle() > self._blend:
+            return
+        self._prefetch = _PendingInference(self._client, observation)
+
     def reset(self) -> None:
         self._current_exec_chunk = None
         self._raw_chunk_size = None
         self._execution_horizon = 0
         self._step_in_cycle = 0
+        self._prefetch = None
         self.last_response = None
         self.last_infer_latency_ms = None
+        self.last_prefetch_wait_ms = None
         self._client.reset()
 
     def pop_action(self, observation: dict[str, Any]) -> tuple[Any, bool]:
@@ -104,12 +132,45 @@ class ActionChunkBuffer:
         if self._current_exec_chunk is None:
             raise RuntimeError("No action chunk is available for execution.")
 
+        self._maybe_start_prefetch(observation)
         action = self._current_exec_chunk[self._step_in_cycle].copy()
         self._step_in_cycle += 1
         return action, fetched_new_chunk
 
     def remaining_in_cycle(self) -> int:
         return max(self._execution_horizon - self._step_in_cycle, 0)
+
+
+class _PendingInference:
+    def __init__(self, client: OpenPIWebsocketClient, observation: dict[str, Any]) -> None:
+        self._client = client
+        self._observation = observation
+        self._ready = threading.Event()
+        self._response: dict[str, Any] | None = None
+        self._error: BaseException | None = None
+        self.last_infer_latency_ms: float | None = None
+        self._thread = threading.Thread(target=self._run, name="openpi-prefetch", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        infer_start = time.perf_counter()
+        try:
+            self._response = self._client.infer(self._observation)
+            self.last_infer_latency_ms = (time.perf_counter() - infer_start) * 1000.0
+        except BaseException as exc:  # pragma: no cover - exercised by wait re-raise path
+            self._error = exc
+        finally:
+            self._ready.set()
+
+    def wait(self) -> tuple[float, dict[str, Any]]:
+        wait_start = time.perf_counter()
+        self._ready.wait()
+        wait_ms = (time.perf_counter() - wait_start) * 1000.0
+        if self._error is not None:
+            raise self._error
+        if self._response is None:
+            raise RuntimeError("OpenPI prefetch finished without a response.")
+        return wait_ms, self._response
 
 
 class ActionSmoother:
@@ -300,12 +361,18 @@ def run_rollout(args: argparse.Namespace) -> None:
                     if chunk_buffer.last_infer_latency_ms is not None and fetched_new_chunk
                     else "-"
                 )
+                prefetch_wait_ms = (
+                    f"{chunk_buffer.last_prefetch_wait_ms:.1f}"
+                    if chunk_buffer.last_prefetch_wait_ms is not None and fetched_new_chunk
+                    else "-"
+                )
                 logger.info(
-                    "step=%d fetched_chunk=%s remaining_in_cycle=%d infer_ms=%s chunk_size=%s execution_horizon=%d blend=%d",
+                    "step=%d fetched_chunk=%s remaining_in_cycle=%d infer_ms=%s prefetch_wait_ms=%s chunk_size=%s execution_horizon=%d blend=%d",
                     step,
                     fetched_new_chunk,
                     remaining_in_cycle,
                     infer_ms,
+                    prefetch_wait_ms,
                     chunk_buffer.raw_chunk_size,
                     chunk_buffer.execution_horizon,
                     chunk_buffer.blend,
