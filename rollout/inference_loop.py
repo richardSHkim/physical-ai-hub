@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -10,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from rollout.action_trace import ActionTrace, plot_action_trace, save_action_trace_csv
+from rollout.async_inference import AsyncInferenceRunner, TimedObservation
 from rollout.clients.openpi import OpenPIWebsocketClient
 from rollout.piper import (
     PiperHardwareConfig,
@@ -20,157 +20,6 @@ from rollout.piper import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class ActionChunkBuffer:
-    def __init__(
-        self,
-        client: OpenPIWebsocketClient,
-        *,
-        fps: float,
-        blend: int,
-    ) -> None:
-        self._client = client
-        self._dt = 1.0 / fps
-        self._blend = blend
-
-        self._current_exec_chunk: Any | None = None
-        self._raw_chunk_size: int | None = None
-        self._execution_horizon: int = 0
-        self._step_in_cycle: int = 0
-        self._prefetch: _PendingInference | None = None
-
-        self.last_response: dict[str, Any] | None = None
-        self.last_infer_latency_ms: float | None = None
-        self.last_prefetch_wait_ms: float | None = None
-
-    @property
-    def blend(self) -> int:
-        return self._blend
-
-    @property
-    def raw_chunk_size(self) -> int | None:
-        return self._raw_chunk_size
-
-    @property
-    def execution_horizon(self) -> int:
-        return self._execution_horizon
-
-    def _validate_chunk(self, action_chunk: Any) -> None:
-        chunk_size = int(action_chunk.shape[0])
-        if self._blend >= chunk_size:
-            raise ValueError(
-                f"--blend must be smaller than the policy chunk size, got blend={self._blend}, chunk_size={chunk_size}"
-            )
-        if self._raw_chunk_size is not None and chunk_size != self._raw_chunk_size:
-            raise ValueError(
-                "Variable action chunk sizes are not supported by the overlap-replan rollout, "
-                f"got previous chunk size {self._raw_chunk_size} and new chunk size {chunk_size}."
-            )
-
-    def _start_new_cycle(self, observation: dict[str, Any]) -> bool:
-        prefetch_wait_ms = 0.0
-        infer_latency_ms = 0.0
-        if self._prefetch is not None:
-            pending = self._prefetch
-            prefetch_wait_ms, response = pending.wait()
-            infer_latency_ms = pending.last_infer_latency_ms or 0.0
-            self._prefetch = None
-        else:
-            infer_start = time.perf_counter()
-            response = self._client.infer(observation)
-            infer_latency_ms = (time.perf_counter() - infer_start) * 1000.0
-            prefetch_wait_ms = infer_latency_ms
-
-        action_chunk = action_dict_to_vector(response)
-        self.last_response = response
-        self.last_infer_latency_ms = infer_latency_ms
-        self.last_prefetch_wait_ms = prefetch_wait_ms
-
-        if action_chunk.ndim == 1:
-            self._current_exec_chunk = action_chunk[None, :].copy()
-            self._execution_horizon = 1
-            self._step_in_cycle = 0
-            self._raw_chunk_size = 1
-            return True
-
-        self._validate_chunk(action_chunk)
-        self._raw_chunk_size = int(action_chunk.shape[0])
-        self._execution_horizon = self._raw_chunk_size - self._blend
-
-        self._current_exec_chunk = action_chunk.copy()
-        self._step_in_cycle = 0
-        return True
-
-    def _maybe_start_prefetch(self, observation: dict[str, Any]) -> None:
-        if self._prefetch is not None:
-            return
-        if self._current_exec_chunk is None or self._raw_chunk_size is None:
-            return
-        if self._raw_chunk_size <= 1:
-            return
-        if self.remaining_in_cycle() > self._blend:
-            return
-        self._prefetch = _PendingInference(self._client, observation)
-
-    def reset(self) -> None:
-        self._current_exec_chunk = None
-        self._raw_chunk_size = None
-        self._execution_horizon = 0
-        self._step_in_cycle = 0
-        self._prefetch = None
-        self.last_response = None
-        self.last_infer_latency_ms = None
-        self.last_prefetch_wait_ms = None
-        self._client.reset()
-
-    def pop_action(self, observation: dict[str, Any]) -> tuple[Any, bool]:
-        fetched_new_chunk = False
-        if self._current_exec_chunk is None or self._step_in_cycle >= self._execution_horizon:
-            fetched_new_chunk = self._start_new_cycle(observation)
-
-        if self._current_exec_chunk is None:
-            raise RuntimeError("No action chunk is available for execution.")
-
-        self._maybe_start_prefetch(observation)
-        action = self._current_exec_chunk[self._step_in_cycle].copy()
-        self._step_in_cycle += 1
-        return action, fetched_new_chunk
-
-    def remaining_in_cycle(self) -> int:
-        return max(self._execution_horizon - self._step_in_cycle, 0)
-
-
-class _PendingInference:
-    def __init__(self, client: OpenPIWebsocketClient, observation: dict[str, Any]) -> None:
-        self._client = client
-        self._observation = observation
-        self._ready = threading.Event()
-        self._response: dict[str, Any] | None = None
-        self._error: BaseException | None = None
-        self.last_infer_latency_ms: float | None = None
-        self._thread = threading.Thread(target=self._run, name="openpi-prefetch", daemon=True)
-        self._thread.start()
-
-    def _run(self) -> None:
-        infer_start = time.perf_counter()
-        try:
-            self._response = self._client.infer(self._observation)
-            self.last_infer_latency_ms = (time.perf_counter() - infer_start) * 1000.0
-        except BaseException as exc:  # pragma: no cover - exercised by wait re-raise path
-            self._error = exc
-        finally:
-            self._ready.set()
-
-    def wait(self) -> tuple[float, dict[str, Any]]:
-        wait_start = time.perf_counter()
-        self._ready.wait()
-        wait_ms = (time.perf_counter() - wait_start) * 1000.0
-        if self._error is not None:
-            raise self._error
-        if self._response is None:
-            raise RuntimeError("OpenPI prefetch finished without a response.")
-        return wait_ms, self._response
 
 
 class ActionSmoother:
@@ -224,7 +73,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-key", default=None, help="Optional API key for the OpenPI server.")
     parser.add_argument("--task", required=True, help="Natural-language task prompt sent to the policy.")
     parser.add_argument("--fps", type=float, default=10.0, help="Robot control frequency in Hz.")
-    parser.add_argument("--blend", type=int, default=2, help="Overlap size between consecutive action chunks.")
+    parser.add_argument(
+        "--actions-per-chunk",
+        type=int,
+        default=50,
+        help="Maximum number of actions kept from each policy response.",
+    )
+    parser.add_argument(
+        "--chunk-size-threshold",
+        type=float,
+        default=0.5,
+        help="Request a fresh observation when queued actions fall below this fraction of the chunk size.",
+    )
+    parser.add_argument(
+        "--aggregate-fn",
+        default="weighted_average",
+        choices=("weighted_average", "latest_only", "average", "conservative"),
+        help="How to merge overlapping future actions from consecutive policy chunks.",
+    )
+    parser.add_argument(
+        "--observation-state-epsilon",
+        type=float,
+        default=1.0,
+        help="Skip non-forced observations whose state is within this L2 distance of the last processed observation.",
+    )
     parser.add_argument(
         "--num-steps",
         type=int,
@@ -284,8 +156,6 @@ def parse_args() -> argparse.Namespace:
 def run_rollout(args: argparse.Namespace) -> None:
     if args.fps <= 0:
         raise ValueError(f"--fps must be > 0, got {args.fps}")
-    if args.blend <= 0:
-        raise ValueError(f"--blend must be > 0, got {args.blend}")
 
     client = OpenPIWebsocketClient(host=args.host, port=args.port, api_key=args.api_key)
     robot = make_piper_follower(
@@ -304,10 +174,13 @@ def run_rollout(args: argparse.Namespace) -> None:
             max_relative_target=args.max_relative_target,
         )
     )
-    chunk_buffer = ActionChunkBuffer(
+    async_runner = AsyncInferenceRunner(
         client,
         fps=args.fps,
-        blend=args.blend,
+        actions_per_chunk=args.actions_per_chunk,
+        chunk_size_threshold=args.chunk_size_threshold,
+        aggregate_fn_name=args.aggregate_fn,
+        observation_state_epsilon=args.observation_state_epsilon,
     )
     action_smoother = ActionSmoother(
         joint_alpha=args.joint_alpha,
@@ -319,11 +192,14 @@ def run_rollout(args: argparse.Namespace) -> None:
         logger.info("Server metadata: %s", client.metadata)
 
     robot.connect()
+    async_runner.start()
     logger.info("PiPER follower connected. Starting rollout for task: %s", args.task)
     logger.info(
-        "Rollout controls: fps=%.1f blend=%d speed_ratio=%d max_relative_target=%s joint_alpha=%.2f gripper_alpha=%.2f",
+        "Rollout controls: fps=%.1f actions_per_chunk=%d chunk_size_threshold=%.2f aggregate_fn=%s speed_ratio=%d max_relative_target=%s joint_alpha=%.2f gripper_alpha=%.2f",
         args.fps,
-        args.blend,
+        args.actions_per_chunk,
+        args.chunk_size_threshold,
+        args.aggregate_fn,
         args.speed_ratio,
         args.max_relative_target,
         args.joint_alpha,
@@ -339,43 +215,47 @@ def run_rollout(args: argparse.Namespace) -> None:
         while args.num_steps <= 0 or step < args.num_steps:
             step_start = time.perf_counter()
             raw_observation = robot.get_observation()
-            policy_observation = observation_to_openpi_input(raw_observation, args.task)
 
-            action_vector, fetched_new_chunk = chunk_buffer.pop_action(policy_observation)
-            command_vector = action_smoother.smooth(action_vector, raw_observation)
-            action_timestamp_s = time.perf_counter() - rollout_start
-            robot.send_action(vector_to_robot_action(command_vector))
-            if trace is not None:
-                trace.record(
-                    timestamp_s=action_timestamp_s,
-                    step=step,
-                    action=command_vector,
-                    fetched_new_chunk=fetched_new_chunk,
-                    infer_latency_ms=chunk_buffer.last_infer_latency_ms if fetched_new_chunk else None,
+            fetched_new_chunk = False
+            infer_latency_ms: float | None = None
+            if async_runner.actions_available():
+                timed_action = async_runner.pop_action()
+                command_vector = action_smoother.smooth(timed_action.action, raw_observation)
+                action_timestamp_s = time.perf_counter() - rollout_start
+                robot.send_action(vector_to_robot_action(command_vector))
+                fetched_new_chunk = timed_action.is_refresh
+                infer_latency_ms = timed_action.infer_latency_ms
+                if trace is not None:
+                    trace.record(
+                        timestamp_s=action_timestamp_s,
+                        step=step,
+                        action=command_vector,
+                        fetched_new_chunk=fetched_new_chunk,
+                        infer_latency_ms=infer_latency_ms,
+                    )
+
+            observation_accepted = False
+            if async_runner.ready_for_observation():
+                observation_accepted = async_runner.submit_observation(
+                    TimedObservation(
+                        timestamp=time.time(),
+                        timestep=max(async_runner.latest_action_timestep, 0),
+                        observation=observation_to_openpi_input(raw_observation, args.task),
+                        must_go=async_runner.should_force_observation(),
+                    )
                 )
 
             if args.log_every > 0 and step % args.log_every == 0:
-                remaining_in_cycle = chunk_buffer.remaining_in_cycle()
-                infer_ms = (
-                    f"{chunk_buffer.last_infer_latency_ms:.1f}"
-                    if chunk_buffer.last_infer_latency_ms is not None and fetched_new_chunk
-                    else "-"
-                )
-                prefetch_wait_ms = (
-                    f"{chunk_buffer.last_prefetch_wait_ms:.1f}"
-                    if chunk_buffer.last_prefetch_wait_ms is not None and fetched_new_chunk
-                    else "-"
-                )
+                infer_ms = f"{infer_latency_ms:.1f}" if infer_latency_ms is not None and fetched_new_chunk else "-"
                 logger.info(
-                    "step=%d fetched_chunk=%s remaining_in_cycle=%d infer_ms=%s prefetch_wait_ms=%s chunk_size=%s execution_horizon=%d blend=%d",
+                    "step=%d fetched_chunk=%s infer_ms=%s queue_size=%d chunk_size=%s observation_accepted=%s latest_action=%d",
                     step,
                     fetched_new_chunk,
-                    remaining_in_cycle,
                     infer_ms,
-                    prefetch_wait_ms,
-                    chunk_buffer.raw_chunk_size,
-                    chunk_buffer.execution_horizon,
-                    chunk_buffer.blend,
+                    async_runner.queue_size(),
+                    async_runner.raw_chunk_size,
+                    observation_accepted,
+                    async_runner.latest_action_timestep,
                 )
 
             elapsed = time.perf_counter() - step_start
@@ -388,7 +268,7 @@ def run_rollout(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         logger.info("Rollout interrupted by user.")
     finally:
-        chunk_buffer.reset()
+        async_runner.stop()
         robot.disconnect()
         logger.info("Rollout stopped after %d steps in %.1f s", step, time.perf_counter() - rollout_start)
         if trace is not None:

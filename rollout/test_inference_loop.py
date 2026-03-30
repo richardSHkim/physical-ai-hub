@@ -6,7 +6,8 @@ import unittest
 
 import numpy as np
 
-from rollout.inference_loop import ActionChunkBuffer, ActionSmoother
+from rollout.async_inference import AsyncInferenceRunner, TimedObservation
+from rollout.inference_loop import ActionSmoother
 
 
 class _FakeClient:
@@ -18,15 +19,16 @@ class _FakeClient:
         self.metadata = {}
         self.reset_calls = 0
         self.call_events = [threading.Event() for _ in self._responses]
+        self.observations: list[dict[str, np.ndarray]] = []
 
     def infer(self, observation):
-        del observation
         with self._lock:
             call_idx = self.calls
             response = self._responses[call_idx]
+            delay = self._delays[call_idx]
             self.calls += 1
             self.call_events[call_idx].set()
-            delay = self._delays[call_idx]
+            self.observations.append(observation)
         if delay > 0:
             time.sleep(delay)
         return {"actions": response}
@@ -35,102 +37,139 @@ class _FakeClient:
         self.reset_calls += 1
 
 
-class ActionChunkBufferTest(unittest.TestCase):
-    def test_overlap_replan_fetches_every_execution_horizon(self):
-        chunk_a = np.arange(50 * 7, dtype=np.float32).reshape(50, 7)
-        chunk_b = chunk_a + 1000.0
-        client = _FakeClient([chunk_a, chunk_b])
-        buffer = ActionChunkBuffer(
-            client,
-            fps=10.0,
-            blend=10,
-        )
+def _observation(step: int, *, must_go: bool = False) -> TimedObservation:
+    return TimedObservation(
+        timestamp=float(step),
+        timestep=step,
+        observation={
+            "state": np.full(7, step, dtype=np.float32),
+        },
+        must_go=must_go,
+    )
 
-        first_flags = []
-        first_actions = []
-        for _ in range(40):
-            action, fetched = buffer.pop_action({"obs": 1})
-            first_actions.append(action)
-            first_flags.append(fetched)
 
-        self.assertEqual(client.calls, 2)
-        self.assertTrue(first_flags[0])
-        self.assertTrue(all(not flag for flag in first_flags[1:]))
-        np.testing.assert_allclose(np.asarray(first_actions), chunk_a[:40])
-        self.assertEqual(buffer.remaining_in_cycle(), 0)
-
-        next_action, fetched = buffer.pop_action({"obs": 2})
-        self.assertTrue(fetched)
-        self.assertEqual(client.calls, 2)
-        np.testing.assert_allclose(next_action, chunk_b[0])
-        self.assertEqual(buffer.execution_horizon, 40)
-        self.assertEqual(buffer.raw_chunk_size, 50)
-        self.assertIsNotNone(buffer.last_prefetch_wait_ms)
-
-    def test_single_step_action_falls_back_without_overlap(self):
-        client = _FakeClient([np.arange(7, dtype=np.float32)])
-        buffer = ActionChunkBuffer(
-            client,
-            fps=10.0,
-            blend=10,
-        )
-
-        action, fetched = buffer.pop_action({"obs": 1})
-        self.assertTrue(fetched)
-        np.testing.assert_allclose(action, np.arange(7, dtype=np.float32))
-        self.assertEqual(buffer.execution_horizon, 1)
-        self.assertEqual(buffer.remaining_in_cycle(), 0)
-
-    def test_prefetch_completes_before_cycle_boundary(self):
-        chunk_a = np.arange(6 * 7, dtype=np.float32).reshape(6, 7)
-        chunk_b = chunk_a + 100.0
-        client = _FakeClient([chunk_a, chunk_b], delays=[0.0, 0.15])
-        buffer = ActionChunkBuffer(client, fps=10.0, blend=2)
-
-        for _ in range(3):
-            buffer.pop_action({"obs": 1})
-
-        self.assertTrue(client.call_events[1].wait(timeout=1.0))
-        time.sleep(0.2)
-        buffer.pop_action({"obs": 1})
-
-        switch_start = time.perf_counter()
-        next_action, fetched = buffer.pop_action({"obs": 2})
-        switch_elapsed_ms = (time.perf_counter() - switch_start) * 1000.0
-
-        self.assertTrue(fetched)
-        np.testing.assert_allclose(next_action, chunk_b[0])
-        self.assertLess(switch_elapsed_ms, 50.0)
-        self.assertLess(buffer.last_prefetch_wait_ms or 0.0, 50.0)
-
-    def test_invalid_blend_is_rejected(self):
-        chunk = np.zeros((10, 7), dtype=np.float32)
-
-        blend_client = _FakeClient([chunk])
-        blend_buffer = ActionChunkBuffer(
-            blend_client,
-            fps=10.0,
-            blend=10,
-        )
-        with self.assertRaisesRegex(ValueError, "blend"):
-            blend_buffer.pop_action({"obs": 1})
-
-    def test_reset_clears_cycle_state(self):
-        chunk = np.arange(20 * 7, dtype=np.float32).reshape(20, 7)
+class AsyncInferenceRunnerTest(unittest.TestCase):
+    def test_runner_processes_initial_observation_and_exposes_actions(self):
+        chunk = np.arange(4 * 7, dtype=np.float32).reshape(4, 7)
         client = _FakeClient([chunk])
-        buffer = ActionChunkBuffer(
+        runner = AsyncInferenceRunner(
             client,
             fps=10.0,
-            blend=5,
+            actions_per_chunk=4,
+            chunk_size_threshold=0.5,
+            aggregate_fn_name="latest_only",
         )
+        runner.start()
+        try:
+            accepted = runner.submit_observation(_observation(0, must_go=True))
+            self.assertTrue(accepted)
+            self.assertTrue(client.call_events[0].wait(timeout=1.0))
 
-        buffer.pop_action({"obs": 1})
-        buffer.reset()
+            deadline = time.time() + 1.0
+            while not runner.actions_available() and time.time() < deadline:
+                time.sleep(0.01)
 
-        self.assertIsNone(buffer.raw_chunk_size)
-        self.assertEqual(buffer.execution_horizon, 0)
-        self.assertEqual(buffer.remaining_in_cycle(), 0)
+            self.assertTrue(runner.actions_available())
+            popped = [runner.pop_action().action for _ in range(4)]
+            np.testing.assert_allclose(np.asarray(popped), chunk)
+            self.assertEqual(runner.latest_action_timestep, 3)
+            self.assertEqual(runner.raw_chunk_size, 4)
+        finally:
+            runner.stop()
+
         self.assertEqual(client.reset_calls, 1)
+
+    def test_runner_threshold_requests_fresh_observation_when_queue_runs_low(self):
+        chunk = np.arange(4 * 7, dtype=np.float32).reshape(4, 7)
+        client = _FakeClient([chunk])
+        runner = AsyncInferenceRunner(
+            client,
+            fps=10.0,
+            actions_per_chunk=4,
+            chunk_size_threshold=0.5,
+            aggregate_fn_name="latest_only",
+        )
+        runner.start()
+        try:
+            runner.submit_observation(_observation(0, must_go=True))
+            self.assertTrue(client.call_events[0].wait(timeout=1.0))
+
+            deadline = time.time() + 1.0
+            while runner.queue_size() < 4 and time.time() < deadline:
+                time.sleep(0.01)
+
+            self.assertFalse(runner.ready_for_observation())
+            runner.pop_action()
+            self.assertFalse(runner.ready_for_observation())
+            runner.pop_action()
+            self.assertTrue(runner.ready_for_observation())
+        finally:
+            runner.stop()
+
+    def test_runner_aggregates_overlapping_future_actions(self):
+        chunk_a = np.zeros((3, 7), dtype=np.float32)
+        chunk_b = np.full((3, 7), 10.0, dtype=np.float32)
+        client = _FakeClient([chunk_a, chunk_b])
+        runner = AsyncInferenceRunner(
+            client,
+            fps=10.0,
+            actions_per_chunk=3,
+            chunk_size_threshold=1.0,
+            aggregate_fn_name="average",
+        )
+        runner.start()
+        try:
+            runner.submit_observation(_observation(0, must_go=True))
+            self.assertTrue(client.call_events[0].wait(timeout=1.0))
+            deadline = time.time() + 1.0
+            while runner.queue_size() < 3 and time.time() < deadline:
+                time.sleep(0.01)
+
+            runner.submit_observation(_observation(0, must_go=True))
+            self.assertTrue(client.call_events[1].wait(timeout=1.0))
+            deadline = time.time() + 1.0
+            while runner.queue_size() < 3 and time.time() < deadline:
+                time.sleep(0.01)
+
+            first_action = runner.pop_action()
+            np.testing.assert_allclose(first_action.action, np.full(7, 5.0, dtype=np.float32))
+            self.assertTrue(first_action.is_refresh)
+            self.assertIsNotNone(first_action.infer_latency_ms)
+        finally:
+            runner.stop()
+
+    def test_runner_skips_similar_non_forced_observations(self):
+        chunk = np.arange(2 * 7, dtype=np.float32).reshape(2, 7)
+        client = _FakeClient([chunk])
+        runner = AsyncInferenceRunner(
+            client,
+            fps=10.0,
+            actions_per_chunk=2,
+            chunk_size_threshold=1.0,
+            aggregate_fn_name="latest_only",
+            observation_state_epsilon=0.5,
+        )
+        runner.start()
+        try:
+            runner.submit_observation(_observation(1, must_go=True))
+            self.assertTrue(client.call_events[0].wait(timeout=1.0))
+
+            deadline = time.time() + 1.0
+            while runner.queue_size() < 2 and time.time() < deadline:
+                time.sleep(0.01)
+
+            accepted = runner.submit_observation(
+                TimedObservation(
+                    timestamp=2.0,
+                    timestep=2,
+                    observation={"state": np.full(7, 1.1, dtype=np.float32)},
+                    must_go=False,
+                )
+            )
+            self.assertFalse(accepted)
+            self.assertEqual(client.calls, 1)
+        finally:
+            runner.stop()
 
 
 class ActionSmootherTest(unittest.TestCase):
