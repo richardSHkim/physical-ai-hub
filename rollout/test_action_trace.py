@@ -10,27 +10,27 @@ from rollout.action_trace import ActionTrace, JOINT_NAMES, plot_action_trace, sa
 
 
 class ActionTraceTest(unittest.TestCase):
-    def test_record_tracks_prediction_boundaries(self):
+    def test_record_tracks_chunk_boundaries(self):
         trace = ActionTrace()
 
         trace.record(
             timestamp_s=0.1,
             step=0,
             action=np.arange(len(JOINT_NAMES), dtype=np.float32),
-            fetched_new_chunk=True,
+            started_new_chunk=True,
             infer_latency_ms=12.5,
         )
         trace.record(
             timestamp_s=0.2,
             step=1,
             action=np.arange(len(JOINT_NAMES), dtype=np.float32) + 1.0,
-            fetched_new_chunk=False,
+            started_new_chunk=False,
             infer_latency_ms=None,
         )
 
         self.assertEqual(trace.timestamps_s, [0.1, 0.2])
-        self.assertEqual(trace.new_prediction_times_s, [0.1])
-        self.assertEqual(trace.prediction_step_indices, [0])
+        self.assertEqual(trace.new_chunk_times_s, [0.1])
+        self.assertEqual(trace.new_chunk_step_indices, [0])
         self.assertEqual(trace.infer_latency_ms, [12.5])
         self.assertEqual(trace.action_matrix().shape, (2, len(JOINT_NAMES)))
 
@@ -41,7 +41,7 @@ class ActionTraceTest(unittest.TestCase):
                 timestamp_s=step * 0.1,
                 step=step,
                 action=np.full(len(JOINT_NAMES), step, dtype=np.float32),
-                fetched_new_chunk=step in {0, 2},
+                started_new_chunk=step in {0, 2},
                 infer_latency_ms=5.0 if step in {0, 2} else None,
             )
 
@@ -55,6 +55,7 @@ class ActionTraceTest(unittest.TestCase):
                 dpi=100,
                 show_plot=False,
                 title="test trace",
+                show_chunk_transitions=False,
             )
             save_action_trace_csv(trace, csv_path)
 
@@ -65,8 +66,32 @@ class ActionTraceTest(unittest.TestCase):
             self.assertEqual(len(csv_lines), 5)
             self.assertEqual(
                 csv_lines[0],
-                "step,time_s,joint_1.pos,joint_2.pos,joint_3.pos,joint_4.pos,joint_5.pos,joint_6.pos,gripper.pos,new_prediction",
+                "step,time_s,joint_1.pos,joint_2.pos,joint_3.pos,joint_4.pos,joint_5.pos,joint_6.pos,gripper.pos,new_chunk",
             )
+
+    def test_plot_can_render_with_chunk_transitions_enabled(self):
+        trace = ActionTrace()
+        for step in range(3):
+            trace.record(
+                timestamp_s=step * 0.1,
+                step=step,
+                action=np.full(len(JOINT_NAMES), step, dtype=np.float32),
+                started_new_chunk=step == 1,
+                infer_latency_ms=5.0 if step == 1 else None,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            plot_path = Path(tmp_dir) / "trace_with_chunks.png"
+            plot_action_trace(
+                trace,
+                output_path=plot_path,
+                dpi=100,
+                show_plot=False,
+                title="test trace",
+                show_chunk_transitions=True,
+            )
+            self.assertTrue(plot_path.exists())
+            self.assertGreater(plot_path.stat().st_size, 0)
 
 
 if __name__ == "__main__":

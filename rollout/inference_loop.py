@@ -141,7 +141,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--plot-output",
         default=None,
-        help="Optional path to save a joint-action plot with prediction refresh markers.",
+        help="Optional path to save a joint-action plot.",
     )
     parser.add_argument(
         "--csv-output",
@@ -149,6 +149,11 @@ def parse_args() -> argparse.Namespace:
         help="Optional CSV path for the recorded joint-action time series.",
     )
     parser.add_argument("--plot-dpi", type=int, default=150, help="Saved plot DPI.")
+    parser.add_argument(
+        "--plot-chunk-transitions",
+        action="store_true",
+        help="Overlay red vertical lines where the executed action stream switches to a new chunk.",
+    )
     parser.add_argument("--show-plot", action="store_true", help="Display the action plot after rollout ends.")
     return parser.parse_args()
 
@@ -230,7 +235,7 @@ def run_rollout(args: argparse.Namespace) -> None:
                         timestamp_s=action_timestamp_s,
                         step=step,
                         action=command_vector,
-                        fetched_new_chunk=fetched_new_chunk,
+                        started_new_chunk=fetched_new_chunk,
                         infer_latency_ms=infer_latency_ms,
                     )
 
@@ -278,6 +283,7 @@ def run_rollout(args: argparse.Namespace) -> None:
                 dpi=args.plot_dpi,
                 show_plot=args.show_plot,
                 title=f"PiPER action trace for task: {args.task}",
+                show_chunk_transitions=args.plot_chunk_transitions,
             )
             if args.csv_output:
                 csv_output = Path(args.csv_output)

@@ -246,7 +246,7 @@ class AsyncInferenceRunner:
                     timestamp=observation.timestamp + index * self._dt,
                     timestep=observation.timestep + index,
                     action=np.asarray(action, dtype=np.float32).copy(),
-                    is_refresh=index == 0,
+                    is_refresh=False,
                     infer_latency_ms=infer_latency_ms if index == 0 else None,
                 )
             )
@@ -277,6 +277,10 @@ class AsyncInferenceRunner:
 
     def _merge_actions(self, incoming_actions: list[TimedAction]) -> None:
         with self._action_lock:
+            first_refresh_timestep = next(
+                (action.timestep for action in incoming_actions if action.timestep > self._latest_action),
+                None,
+            )
             future_actions = {
                 action.timestep: action
                 for action in self._action_queue
@@ -287,13 +291,20 @@ class AsyncInferenceRunner:
                 if new_action.timestep <= self._latest_action:
                     continue
 
+                marks_chunk_transition = new_action.timestep == first_refresh_timestep
                 existing_action = future_actions.get(new_action.timestep)
                 if existing_action is None:
-                    future_actions[new_action.timestep] = new_action
+                    future_actions[new_action.timestep] = TimedAction(
+                        timestamp=new_action.timestamp,
+                        timestep=new_action.timestep,
+                        action=new_action.action,
+                        is_refresh=marks_chunk_transition,
+                        infer_latency_ms=new_action.infer_latency_ms if marks_chunk_transition else None,
+                    )
                     continue
 
                 infer_latency_ms = existing_action.infer_latency_ms
-                if new_action.is_refresh and new_action.infer_latency_ms is not None:
+                if marks_chunk_transition and new_action.infer_latency_ms is not None:
                     infer_latency_ms = new_action.infer_latency_ms
 
                 future_actions[new_action.timestep] = TimedAction(
@@ -303,7 +314,7 @@ class AsyncInferenceRunner:
                         np.float32,
                         copy=False,
                     ),
-                    is_refresh=existing_action.is_refresh or new_action.is_refresh,
+                    is_refresh=existing_action.is_refresh or marks_chunk_transition,
                     infer_latency_ms=infer_latency_ms,
                 )
 

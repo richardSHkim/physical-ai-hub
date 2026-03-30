@@ -30,8 +30,8 @@ JOINT_NAMES = (
 class ActionTrace:
     timestamps_s: list[float] = field(default_factory=list)
     actions: list[np.ndarray] = field(default_factory=list)
-    new_prediction_times_s: list[float] = field(default_factory=list)
-    prediction_step_indices: list[int] = field(default_factory=list)
+    new_chunk_times_s: list[float] = field(default_factory=list)
+    new_chunk_step_indices: list[int] = field(default_factory=list)
     infer_latency_ms: list[float] = field(default_factory=list)
 
     def record(
@@ -40,14 +40,14 @@ class ActionTrace:
         timestamp_s: float,
         step: int,
         action: np.ndarray,
-        fetched_new_chunk: bool,
+        started_new_chunk: bool,
         infer_latency_ms: float | None,
     ) -> None:
         self.timestamps_s.append(float(timestamp_s))
         self.actions.append(np.asarray(action, dtype=np.float32).copy())
-        if fetched_new_chunk:
-            self.new_prediction_times_s.append(float(timestamp_s))
-            self.prediction_step_indices.append(int(step))
+        if started_new_chunk:
+            self.new_chunk_times_s.append(float(timestamp_s))
+            self.new_chunk_step_indices.append(int(step))
             if infer_latency_ms is not None:
                 self.infer_latency_ms.append(float(infer_latency_ms))
 
@@ -62,18 +62,18 @@ class ActionTrace:
 
 def save_action_trace_csv(trace: ActionTrace, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    prediction_steps = set(trace.prediction_step_indices)
+    chunk_steps = set(trace.new_chunk_step_indices)
     actions = trace.action_matrix()
     with output_path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.writer(csv_file)
-        writer.writerow(["step", "time_s", *JOINT_NAMES, "new_prediction"])
+        writer.writerow(["step", "time_s", *JOINT_NAMES, "new_chunk"])
         for step, (timestamp_s, action) in enumerate(zip(trace.timestamps_s, actions, strict=True)):
             writer.writerow(
                 [
                     step,
                     f"{timestamp_s:.6f}",
                     *[f"{float(value):.8f}" for value in action],
-                    int(step in prediction_steps),
+                    int(step in chunk_steps),
                 ]
             )
 
@@ -85,6 +85,7 @@ def plot_action_trace(
     dpi: int,
     show_plot: bool,
     title: str,
+    show_chunk_transitions: bool = False,
 ) -> None:
     if output_path is None and not show_plot:
         return
@@ -106,14 +107,18 @@ def plot_action_trace(
 
     for joint_idx, (ax, joint_name) in enumerate(zip(axes_array, JOINT_NAMES, strict=True)):
         ax.plot(times, actions[:, joint_idx], color="tab:blue", linewidth=1.5)
-        for prediction_time_s in trace.new_prediction_times_s:
-            ax.axvline(prediction_time_s, color="red", linewidth=1.0, alpha=0.45)
+        if show_chunk_transitions:
+            for chunk_time_s in trace.new_chunk_times_s:
+                ax.axvline(chunk_time_s, color="red", linewidth=1.0, alpha=0.45)
         ax.set_ylabel(joint_name)
         ax.grid(True, alpha=0.3)
 
     axes_array[-1].set_xlabel("time [s]")
-    prediction_count = len(trace.new_prediction_times_s)
-    fig.suptitle(f"{title}\nRecorded {len(times)} actions, {prediction_count} prediction refreshes")
+    chunk_count = len(trace.new_chunk_times_s)
+    if show_chunk_transitions:
+        fig.suptitle(f"{title}\nRecorded {len(times)} actions, {chunk_count} chunk transitions")
+    else:
+        fig.suptitle(f"{title}\nRecorded {len(times)} actions")
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.98))
 
     if output_path is not None:

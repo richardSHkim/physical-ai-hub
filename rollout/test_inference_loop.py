@@ -130,11 +130,47 @@ class AsyncInferenceRunnerTest(unittest.TestCase):
             deadline = time.time() + 1.0
             while runner.queue_size() < 3 and time.time() < deadline:
                 time.sleep(0.01)
+            time.sleep(0.05)
 
             first_action = runner.pop_action()
             np.testing.assert_allclose(first_action.action, np.full(7, 5.0, dtype=np.float32))
             self.assertTrue(first_action.is_refresh)
             self.assertIsNotNone(first_action.infer_latency_ms)
+        finally:
+            runner.stop()
+
+    def test_runner_marks_first_executable_action_of_new_chunk(self):
+        chunk_a = np.zeros((3, 7), dtype=np.float32)
+        chunk_b = np.full((3, 7), 10.0, dtype=np.float32)
+        client = _FakeClient([chunk_a, chunk_b])
+        runner = AsyncInferenceRunner(
+            client,
+            fps=10.0,
+            actions_per_chunk=3,
+            chunk_size_threshold=1.0,
+            aggregate_fn_name="latest_only",
+        )
+        runner.start()
+        try:
+            runner.submit_observation(_observation(0, must_go=True))
+            self.assertTrue(client.call_events[0].wait(timeout=1.0))
+            deadline = time.time() + 1.0
+            while runner.queue_size() < 3 and time.time() < deadline:
+                time.sleep(0.01)
+
+            first_action = runner.pop_action()
+            self.assertTrue(first_action.is_refresh)
+
+            runner.submit_observation(_observation(0, must_go=True))
+            self.assertTrue(client.call_events[1].wait(timeout=1.0))
+            deadline = time.time() + 1.0
+            while runner.queue_size() < 2 and time.time() < deadline:
+                time.sleep(0.01)
+            time.sleep(0.05)
+
+            next_action = runner.pop_action()
+            self.assertTrue(next_action.is_refresh)
+            np.testing.assert_allclose(next_action.action, np.full(7, 10.0, dtype=np.float32))
         finally:
             runner.stop()
 
