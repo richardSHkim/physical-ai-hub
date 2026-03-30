@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from rollout.inference_loop import ActionChunkBuffer
+from rollout.inference_loop import ActionChunkBuffer, ActionSmoother
 
 
 class _FakeClient:
@@ -97,6 +97,45 @@ class ActionChunkBufferTest(unittest.TestCase):
         self.assertEqual(buffer.execution_horizon, 0)
         self.assertEqual(buffer.remaining_in_cycle(), 0)
         self.assertEqual(client.reset_calls, 1)
+
+
+class ActionSmootherTest(unittest.TestCase):
+    def test_smooth_blends_toward_measured_state(self):
+        smoother = ActionSmoother(joint_alpha=0.25, gripper_alpha=0.5)
+        measured = {
+            "joint_1.pos": 0.0,
+            "joint_2.pos": 1.0,
+            "joint_3.pos": 2.0,
+            "joint_4.pos": 3.0,
+            "joint_5.pos": 4.0,
+            "joint_6.pos": 5.0,
+            "gripper.pos": 0.2,
+        }
+        raw_action = np.asarray([1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 1.0], dtype=np.float32)
+
+        smoothed = smoother.smooth(raw_action, measured)
+
+        np.testing.assert_allclose(
+            smoothed,
+            np.asarray([0.25, 1.5, 2.75, 4.0, 5.25, 6.5, 0.6], dtype=np.float32),
+        )
+
+    def test_smooth_clips_gripper_into_valid_range(self):
+        smoother = ActionSmoother(joint_alpha=1.0, gripper_alpha=0.5)
+        measured = {
+            "joint_1.pos": 0.0,
+            "joint_2.pos": 0.0,
+            "joint_3.pos": 0.0,
+            "joint_4.pos": 0.0,
+            "joint_5.pos": 0.0,
+            "joint_6.pos": 0.0,
+            "gripper.pos": 0.8,
+        }
+        raw_action = np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0], dtype=np.float32)
+
+        smoothed = smoother.smooth(raw_action, measured)
+
+        self.assertEqual(smoothed[6], 1.0)
 
 
 if __name__ == "__main__":

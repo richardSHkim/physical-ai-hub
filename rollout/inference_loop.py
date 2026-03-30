@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from rollout.action_trace import ActionTrace, plot_action_trace, save_action_trace_csv
 from rollout.clients.openpi import OpenPIWebsocketClient
 from rollout.piper import (
@@ -110,6 +112,50 @@ class ActionChunkBuffer:
         return max(self._execution_horizon - self._step_in_cycle, 0)
 
 
+class ActionSmoother:
+    def __init__(
+        self,
+        *,
+        joint_alpha: float,
+        gripper_alpha: float,
+    ) -> None:
+        self._joint_alpha = float(joint_alpha)
+        self._gripper_alpha = float(gripper_alpha)
+
+        if not 0.0 < self._joint_alpha <= 1.0:
+            raise ValueError(f"--joint-alpha must be in (0, 1], got {self._joint_alpha}")
+        if not 0.0 < self._gripper_alpha <= 1.0:
+            raise ValueError(f"--gripper-alpha must be in (0, 1], got {self._gripper_alpha}")
+
+    @property
+    def enabled(self) -> bool:
+        return self._joint_alpha < 1.0 or self._gripper_alpha < 1.0
+
+    def smooth(self, action: Any, observation: dict[str, Any]) -> Any:
+        action_vector = action_dict_to_vector({"actions": action}).astype("float32", copy=True)
+        if action_vector.shape != (7,):
+            raise ValueError(f"Expected one Piper action with shape (7,), got {action_vector.shape}.")
+
+        measured = np.asarray(
+            [
+                observation["joint_1.pos"],
+                observation["joint_2.pos"],
+                observation["joint_3.pos"],
+                observation["joint_4.pos"],
+                observation["joint_5.pos"],
+                observation["joint_6.pos"],
+                observation["gripper.pos"],
+            ],
+            dtype=np.float32,
+        )
+
+        smoothed = action_vector.copy()
+        smoothed[:6] = measured[:6] + self._joint_alpha * (action_vector[:6] - measured[:6])
+        smoothed[6] = measured[6] + self._gripper_alpha * (action_vector[6] - measured[6])
+        smoothed[6] = float(np.clip(smoothed[6], 0.0, 1.0))
+        return smoothed
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run real-robot Piper rollout against an OpenPI websocket server.")
     parser.add_argument("--host", default="127.0.0.1", help="OpenPI websocket host.")
@@ -135,6 +181,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-depth", action="store_true", help="Enable RealSense depth streams.")
     parser.add_argument("--speed-ratio", type=int, default=60, help="PiPER speed ratio in [0, 100].")
     parser.add_argument("--gripper-opening-m", type=float, default=0.07, help="Max gripper opening in meters.")
+    parser.add_argument(
+        "--joint-alpha",
+        type=float,
+        default=1.0,
+        help="Per-step low-pass blend toward policy joint targets. 1.0 disables smoothing, smaller is smoother/slower.",
+    )
+    parser.add_argument(
+        "--gripper-alpha",
+        type=float,
+        default=1.0,
+        help="Per-step low-pass blend toward policy gripper targets. 1.0 disables smoothing, smaller is smoother/slower.",
+    )
     parser.add_argument(
         "--startup-enable-timeout-s",
         type=float,
@@ -190,6 +248,10 @@ def run_rollout(args: argparse.Namespace) -> None:
         fps=args.fps,
         blend=args.blend,
     )
+    action_smoother = ActionSmoother(
+        joint_alpha=args.joint_alpha,
+        gripper_alpha=args.gripper_alpha,
+    )
 
     logger.info("Connected to OpenPI server at %s:%d", args.host, args.port)
     if client.metadata:
@@ -197,6 +259,15 @@ def run_rollout(args: argparse.Namespace) -> None:
 
     robot.connect()
     logger.info("PiPER follower connected. Starting rollout for task: %s", args.task)
+    logger.info(
+        "Rollout controls: fps=%.1f blend=%d speed_ratio=%d max_relative_target=%s joint_alpha=%.2f gripper_alpha=%.2f",
+        args.fps,
+        args.blend,
+        args.speed_ratio,
+        args.max_relative_target,
+        args.joint_alpha,
+        args.gripper_alpha,
+    )
 
     control_period_s = 1.0 / args.fps
     step = 0
@@ -210,13 +281,14 @@ def run_rollout(args: argparse.Namespace) -> None:
             policy_observation = observation_to_openpi_input(raw_observation, args.task)
 
             action_vector, fetched_new_chunk = chunk_buffer.pop_action(policy_observation)
+            command_vector = action_smoother.smooth(action_vector, raw_observation)
             action_timestamp_s = time.perf_counter() - rollout_start
-            robot.send_action(vector_to_robot_action(action_vector))
+            robot.send_action(vector_to_robot_action(command_vector))
             if trace is not None:
                 trace.record(
                     timestamp_s=action_timestamp_s,
                     step=step,
-                    action=action_vector,
+                    action=command_vector,
                     fetched_new_chunk=fetched_new_chunk,
                     infer_latency_ms=chunk_buffer.last_infer_latency_ms if fetched_new_chunk else None,
                 )
