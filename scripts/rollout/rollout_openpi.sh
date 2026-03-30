@@ -24,6 +24,9 @@ ROLLOUT_SPEED_RATIO="${ROLLOUT_SPEED_RATIO:-60}"
 ROLLOUT_GRIPPER_OPENING_M="${ROLLOUT_GRIPPER_OPENING_M:-0.07}"
 ROLLOUT_STARTUP_ENABLE_TIMEOUT_S="${ROLLOUT_STARTUP_ENABLE_TIMEOUT_S:-5.0}"
 ROLLOUT_MAX_RELATIVE_TARGET="${ROLLOUT_MAX_RELATIVE_TARGET:-}"
+ROLLOUT_PLOT_OUTPUT="${ROLLOUT_PLOT_OUTPUT:-outputs/rollout/piper_action_trace.png}"
+ROLLOUT_CSV_OUTPUT="${ROLLOUT_CSV_OUTPUT:-}"
+ROLLOUT_SHOW_PLOT="${ROLLOUT_SHOW_PLOT:-false}"
 
 ARGS=(
     --host "${OPENPI_HOST}"
@@ -51,6 +54,18 @@ fi
 
 if [[ -n "${ROLLOUT_MAX_RELATIVE_TARGET}" ]]; then
     ARGS+=(--max-relative-target "${ROLLOUT_MAX_RELATIVE_TARGET}")
+fi
+
+if [[ -n "${ROLLOUT_PLOT_OUTPUT}" ]]; then
+    ARGS+=(--plot-output "${ROLLOUT_PLOT_OUTPUT}")
+fi
+
+if [[ -n "${ROLLOUT_CSV_OUTPUT}" ]]; then
+    ARGS+=(--csv-output "${ROLLOUT_CSV_OUTPUT}")
+fi
+
+if [[ "${ROLLOUT_SHOW_PLOT}" == "true" ]]; then
+    ARGS+=(--show-plot)
 fi
 
 exec python3 -m rollout.inference_loop "${ARGS[@]}" "$@"

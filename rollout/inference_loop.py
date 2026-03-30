@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
+from rollout.action_trace import ActionTrace, plot_action_trace, save_action_trace_csv
 from rollout.clients.openpi import OpenPIWebsocketClient
 from rollout.piper import (
     PiperHardwareConfig,
@@ -145,6 +147,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional per-step joint delta clamp in radians.",
     )
+    parser.add_argument(
+        "--plot-output",
+        default=None,
+        help="Optional path to save a joint-action plot with prediction refresh markers.",
+    )
+    parser.add_argument(
+        "--csv-output",
+        default=None,
+        help="Optional CSV path for the recorded joint-action time series.",
+    )
+    parser.add_argument("--plot-dpi", type=int, default=150, help="Saved plot DPI.")
+    parser.add_argument("--show-plot", action="store_true", help="Display the action plot after rollout ends.")
     return parser.parse_args()
 
 
@@ -187,6 +201,7 @@ def run_rollout(args: argparse.Namespace) -> None:
     control_period_s = 1.0 / args.fps
     step = 0
     rollout_start = time.perf_counter()
+    trace = ActionTrace() if args.plot_output or args.csv_output or args.show_plot else None
 
     try:
         while args.num_steps <= 0 or step < args.num_steps:
@@ -195,7 +210,16 @@ def run_rollout(args: argparse.Namespace) -> None:
             policy_observation = observation_to_openpi_input(raw_observation, args.task)
 
             action_vector, fetched_new_chunk = chunk_buffer.pop_action(policy_observation)
+            action_timestamp_s = time.perf_counter() - rollout_start
             robot.send_action(vector_to_robot_action(action_vector))
+            if trace is not None:
+                trace.record(
+                    timestamp_s=action_timestamp_s,
+                    step=step,
+                    action=action_vector,
+                    fetched_new_chunk=fetched_new_chunk,
+                    infer_latency_ms=chunk_buffer.last_infer_latency_ms if fetched_new_chunk else None,
+                )
 
             if args.log_every > 0 and step % args.log_every == 0:
                 remaining_in_cycle = chunk_buffer.remaining_in_cycle()
@@ -222,10 +246,24 @@ def run_rollout(args: argparse.Namespace) -> None:
             else:
                 logger.warning("Control loop overran by %.1f ms at step %d", -remaining * 1000.0, step)
             step += 1
+    except KeyboardInterrupt:
+        logger.info("Rollout interrupted by user.")
     finally:
         chunk_buffer.reset()
         robot.disconnect()
         logger.info("Rollout stopped after %d steps in %.1f s", step, time.perf_counter() - rollout_start)
+        if trace is not None:
+            plot_action_trace(
+                trace,
+                output_path=Path(args.plot_output) if args.plot_output else None,
+                dpi=args.plot_dpi,
+                show_plot=args.show_plot,
+                title=f"PiPER action trace for task: {args.task}",
+            )
+            if args.csv_output:
+                csv_output = Path(args.csv_output)
+                save_action_trace_csv(trace, csv_output)
+                logger.info("Saved action trace CSV to %s", csv_output)
 
 
 def main() -> None:
