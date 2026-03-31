@@ -17,7 +17,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 # Allow importing piper_sdk from the robots/piper venv.
-_PIPER_SITE = Path(__file__).resolve().parents[2] / "robots" / "piper" / ".venv"
+_PIPER_SITE = Path(__file__).resolve().parents[1] / ".venv"
 for _candidate in sorted(_PIPER_SITE.glob("lib/python*/site-packages")):
     if str(_candidate) not in sys.path:
         sys.path.insert(0, str(_candidate))

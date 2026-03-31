@@ -18,7 +18,7 @@ if [ -n "${REPLAY_DRY_RUN}" ]; then
     DRY_RUN_FLAG="--dry-run"
 fi
 
-python "$(dirname "$0")/../../data/tools/replay_ee_dataset.py" \
+python "$(dirname "$0")/../../robots/piper/tools/replay_ee_dataset.py" \
     --dataset "${DATASET_ROOT}/${DATASET_REPO_ID}_ee" \
     --episode "${REPLAY_EPISODE}" \
     --can "${CAN_FOLLOWER:-can_follower}" \
