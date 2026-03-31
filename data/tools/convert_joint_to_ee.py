@@ -55,14 +55,27 @@ def _fk_to_ee(fk: C_PiperForwardKinematics, joints_rad: list[float]) -> list[flo
 def convert_column(
     fk: C_PiperForwardKinematics,
     values: np.ndarray,
+    episode_indices: np.ndarray,
 ) -> np.ndarray:
-    """Convert an (N, 7) joint array to (N, 7) EE-pose array."""
+    """Convert an (N, 7) joint array to (N, 7) EE-pose array.
+
+    Euler angles (rx, ry, rz) are unwrapped per-episode to remove ±2π jumps
+    near the ±π boundary, ensuring continuity for downstream consumers
+    (e.g. robot controllers, delta-action transforms).
+    """
     assert values.shape[1] == 7, f"Expected 7 columns, got {values.shape[1]}"
     out = np.empty_like(values)
     for i in range(len(values)):
         ee = _fk_to_ee(fk, values[i, :6].tolist())
         out[i, :6] = ee
         out[i, 6] = values[i, 6]  # gripper passthrough
+
+    # Unwrap Euler angles per episode to remove ±2π discontinuities.
+    for ep_idx in np.unique(episode_indices):
+        mask = episode_indices == ep_idx
+        for dim in (3, 4, 5):  # rx, ry, rz
+            out[mask, dim] = np.unwrap(out[mask, dim])
+
     return out
 
 
@@ -129,8 +142,8 @@ def convert_dataset(src: Path, dst: Path, dh_is_offset: int = 0x01) -> None:
 
     print(f"Converting {len(actions)} frames ({len(np.unique(episode_indices))} episodes)...")
 
-    ee_actions = convert_column(fk, actions)
-    ee_states = convert_column(fk, states)
+    ee_actions = convert_column(fk, actions, episode_indices)
+    ee_states = convert_column(fk, states, episode_indices)
 
     # --- Build new parquet table ---
     new_columns: dict[str, pa.Array] = {}
