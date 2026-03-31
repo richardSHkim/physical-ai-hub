@@ -22,7 +22,7 @@ class PiperHardwareConfig:
     max_relative_target: float | None = None
 
 
-def make_piper_follower(config: PiperHardwareConfig) -> Any:
+def make_piper_follower(config: PiperHardwareConfig, *, use_ee_pose: bool = False) -> Any:
     from rollout._paths import ensure_local_sources_on_path
 
     ensure_local_sources_on_path()
@@ -38,6 +38,7 @@ def make_piper_follower(config: PiperHardwareConfig) -> Any:
         gripper_opening_m=config.gripper_opening_m,
         startup_enable_timeout_s=config.startup_enable_timeout_s,
         max_relative_target=config.max_relative_target,
+        include_endpose_in_observation=use_ee_pose,
         cameras={
             "base": RealSenseCameraConfig(
                 serial_number_or_name=config.base_serial,
@@ -58,19 +59,38 @@ def make_piper_follower(config: PiperHardwareConfig) -> Any:
     return PiperFollower(robot_config)
 
 
-def observation_to_openpi_input(observation: dict[str, Any], task: str) -> dict[str, Any]:
-    state = np.asarray(
-        [
-            observation["joint_1.pos"],
-            observation["joint_2.pos"],
-            observation["joint_3.pos"],
-            observation["joint_4.pos"],
-            observation["joint_5.pos"],
-            observation["joint_6.pos"],
-            observation["gripper.pos"],
-        ],
-        dtype=np.float32,
-    )
+def observation_to_openpi_input(
+    observation: dict[str, Any],
+    task: str,
+    *,
+    use_ee_pose: bool = False,
+) -> dict[str, Any]:
+    if use_ee_pose:
+        state = np.asarray(
+            [
+                observation["endpose.x"],
+                observation["endpose.y"],
+                observation["endpose.z"],
+                observation["endpose.roll"],
+                observation["endpose.pitch"],
+                observation["endpose.yaw"],
+                observation["gripper.pos"],
+            ],
+            dtype=np.float32,
+        )
+    else:
+        state = np.asarray(
+            [
+                observation["joint_1.pos"],
+                observation["joint_2.pos"],
+                observation["joint_3.pos"],
+                observation["joint_4.pos"],
+                observation["joint_5.pos"],
+                observation["joint_6.pos"],
+                observation["gripper.pos"],
+            ],
+            dtype=np.float32,
+        )
     return {
         "images/base": np.asarray(observation["base"]),
         "images/wrist": np.asarray(observation["wrist"]),
@@ -94,9 +114,19 @@ def action_dict_to_vector(action_dict: dict[str, Any]) -> np.ndarray:
     raise ValueError(f"Unsupported action tensor shape: {action.shape}")
 
 
-def vector_to_robot_action(action: np.ndarray) -> dict[str, float]:
+def vector_to_robot_action(action: np.ndarray, *, use_ee_pose: bool = False) -> dict[str, float]:
     if action.shape != (7,):
         raise ValueError(f"Expected one Piper action with shape (7,), got {action.shape}.")
+    if use_ee_pose:
+        return {
+            "endpose.x": float(action[0]),
+            "endpose.y": float(action[1]),
+            "endpose.z": float(action[2]),
+            "endpose.roll": float(action[3]),
+            "endpose.pitch": float(action[4]),
+            "endpose.yaw": float(action[5]),
+            "gripper.pos": float(action[6]),
+        }
     return {
         "joint_1.pos": float(action[0]),
         "joint_2.pos": float(action[1]),

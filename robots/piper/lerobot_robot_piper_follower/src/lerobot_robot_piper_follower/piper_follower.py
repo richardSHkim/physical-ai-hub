@@ -10,7 +10,7 @@ from lerobot.robots.robot import Robot
 from lerobot.robots.utils import ensure_safe_goal_position
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from piper_common.arm_mixin import PiperArmMixin
-from piper_common.constants import RAD_TO_001DEG
+from piper_common.constants import M_TO_001MM, RAD_TO_001DEG
 
 from .config_piper_follower import PiperFollowerConfig
 
@@ -238,8 +238,42 @@ class PiperFollower(PiperArmMixin, Robot):
             sent["gripper.pos"] = self._set_gripper(float(action["gripper.pos"]))
         return sent
 
+    def _send_ee_pose_action(self, action: RobotAction) -> RobotAction:
+        curr = self._read_endpose()
+        targets = [
+            float(action.get("endpose.x", curr[0])),
+            float(action.get("endpose.y", curr[1])),
+            float(action.get("endpose.z", curr[2])),
+            float(action.get("endpose.roll", curr[3])),
+            float(action.get("endpose.pitch", curr[4])),
+            float(action.get("endpose.yaw", curr[5])),
+        ]
+
+        self._arm.MotionCtrl_2(0x01, 0x00, int(self.config.speed_ratio), 0x00)
+        self._arm.EndPoseCtrl(
+            int(round(targets[0] * M_TO_001MM)),
+            int(round(targets[1] * M_TO_001MM)),
+            int(round(targets[2] * M_TO_001MM)),
+            int(round(targets[3] * RAD_TO_001DEG)),
+            int(round(targets[4] * RAD_TO_001DEG)),
+            int(round(targets[5] * RAD_TO_001DEG)),
+        )
+
+        sent: RobotAction = {
+            "endpose.x": targets[0],
+            "endpose.y": targets[1],
+            "endpose.z": targets[2],
+            "endpose.roll": targets[3],
+            "endpose.pitch": targets[4],
+            "endpose.yaw": targets[5],
+        }
+        if "gripper.pos" in action:
+            sent["gripper.pos"] = self._set_gripper(float(action["gripper.pos"]))
+        return sent
+
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
+        has_ee_pose = any(k in action for k in ("endpose.x", "endpose.y", "endpose.z"))
         has_joint_target = any(
             k in action
             for k in (
@@ -251,6 +285,8 @@ class PiperFollower(PiperArmMixin, Robot):
                 "joint_6.pos",
             )
         )
+        if has_ee_pose:
+            return self._send_ee_pose_action(action)
         if has_joint_target:
             return self._send_joint_action(action)
         if "gripper.pos" in action:
@@ -258,7 +294,7 @@ class PiperFollower(PiperArmMixin, Robot):
 
         raise ValueError(
             "Unsupported action schema for piper_follower. "
-            "Use joint_1.pos..joint_6.pos (+ optional gripper.pos)."
+            "Use joint_1.pos..joint_6.pos or endpose.x/y/z/roll/pitch/yaw (+ optional gripper.pos)."
         )
 
     @check_if_not_connected

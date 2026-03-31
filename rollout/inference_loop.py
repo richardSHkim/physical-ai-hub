@@ -28,9 +28,11 @@ class ActionSmoother:
         *,
         joint_alpha: float,
         gripper_alpha: float,
+        use_ee_pose: bool = False,
     ) -> None:
         self._joint_alpha = float(joint_alpha)
         self._gripper_alpha = float(gripper_alpha)
+        self._use_ee_pose = use_ee_pose
 
         if not 0.0 < self._joint_alpha <= 1.0:
             raise ValueError(f"--joint-alpha must be in (0, 1], got {self._joint_alpha}")
@@ -46,18 +48,32 @@ class ActionSmoother:
         if action_vector.shape != (7,):
             raise ValueError(f"Expected one Piper action with shape (7,), got {action_vector.shape}.")
 
-        measured = np.asarray(
-            [
-                observation["joint_1.pos"],
-                observation["joint_2.pos"],
-                observation["joint_3.pos"],
-                observation["joint_4.pos"],
-                observation["joint_5.pos"],
-                observation["joint_6.pos"],
-                observation["gripper.pos"],
-            ],
-            dtype=np.float32,
-        )
+        if self._use_ee_pose:
+            measured = np.asarray(
+                [
+                    observation["endpose.x"],
+                    observation["endpose.y"],
+                    observation["endpose.z"],
+                    observation["endpose.roll"],
+                    observation["endpose.pitch"],
+                    observation["endpose.yaw"],
+                    observation["gripper.pos"],
+                ],
+                dtype=np.float32,
+            )
+        else:
+            measured = np.asarray(
+                [
+                    observation["joint_1.pos"],
+                    observation["joint_2.pos"],
+                    observation["joint_3.pos"],
+                    observation["joint_4.pos"],
+                    observation["joint_5.pos"],
+                    observation["joint_6.pos"],
+                    observation["gripper.pos"],
+                ],
+                dtype=np.float32,
+            )
 
         smoothed = action_vector.copy()
         smoothed[:6] = measured[:6] + self._joint_alpha * (action_vector[:6] - measured[:6])
@@ -155,6 +171,11 @@ def parse_args() -> argparse.Namespace:
         help="Overlay red vertical lines where the executed action stream switches to a new chunk.",
     )
     parser.add_argument("--show-plot", action="store_true", help="Display the action plot after rollout ends.")
+    parser.add_argument(
+        "--use-ee-pose",
+        action="store_true",
+        help="Use end-effector pose control (EndPoseCtrl) instead of joint control.",
+    )
     return parser.parse_args()
 
 
@@ -163,6 +184,7 @@ def run_rollout(args: argparse.Namespace) -> None:
         raise ValueError(f"--fps must be > 0, got {args.fps}")
 
     client = OpenPIWebsocketClient(host=args.host, port=args.port, api_key=args.api_key)
+    use_ee_pose = args.use_ee_pose
     robot = make_piper_follower(
         PiperHardwareConfig(
             can_name=args.can_name,
@@ -177,7 +199,8 @@ def run_rollout(args: argparse.Namespace) -> None:
             gripper_opening_m=args.gripper_opening_m,
             startup_enable_timeout_s=args.startup_enable_timeout_s,
             max_relative_target=args.max_relative_target,
-        )
+        ),
+        use_ee_pose=use_ee_pose,
     )
     async_runner = AsyncInferenceRunner(
         client,
@@ -190,6 +213,7 @@ def run_rollout(args: argparse.Namespace) -> None:
     action_smoother = ActionSmoother(
         joint_alpha=args.joint_alpha,
         gripper_alpha=args.gripper_alpha,
+        use_ee_pose=use_ee_pose,
     )
 
     logger.info("Connected to OpenPI server at %s:%d", args.host, args.port)
@@ -227,7 +251,7 @@ def run_rollout(args: argparse.Namespace) -> None:
                 timed_action = async_runner.pop_action()
                 command_vector = action_smoother.smooth(timed_action.action, raw_observation)
                 action_timestamp_s = time.perf_counter() - rollout_start
-                robot.send_action(vector_to_robot_action(command_vector))
+                robot.send_action(vector_to_robot_action(command_vector, use_ee_pose=use_ee_pose))
                 fetched_new_chunk = timed_action.is_refresh
                 infer_latency_ms = timed_action.infer_latency_ms
                 if trace is not None:
@@ -245,7 +269,7 @@ def run_rollout(args: argparse.Namespace) -> None:
                     TimedObservation(
                         timestamp=time.time(),
                         timestep=max(async_runner.latest_action_timestep, 0),
-                        observation=observation_to_openpi_input(raw_observation, args.task),
+                        observation=observation_to_openpi_input(raw_observation, args.task, use_ee_pose=use_ee_pose),
                         must_go=async_runner.should_force_observation(),
                     )
                 )
