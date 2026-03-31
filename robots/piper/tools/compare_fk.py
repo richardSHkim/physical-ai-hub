@@ -71,8 +71,12 @@ def main() -> None:
 
     arm = C_PiperInterface_V2(args.can_name)
     arm.ConnectPort()
+    # Disable active control so the robot can be moved by hand.
+    while arm.DisablePiper():
+        time.sleep(0.01)
     fk = C_PiperForwardKinematics(args.dh_is_offset)
     time.sleep(0.2)
+    print("Robot disabled — you can move it by hand.")
 
     labels = ["x(m)", "y(m)", "z(m)", "rx(rad)", "ry(rad)", "rz(rad)"]
 
