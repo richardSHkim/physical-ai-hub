@@ -16,6 +16,7 @@ dependencies = [
     "lerobot-robot-piper-follower",
     "lerobot-teleoperator-bi-piper-leader",
     "lerobot-teleoperator-piper-leader",
+    "matplotlib>=3.10.8",
 ]
 
 [tool.uv.workspace]
